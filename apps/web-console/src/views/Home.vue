@@ -1,0 +1,82 @@
+<template>
+  <div class="home-view">
+    <a-result title="欢迎使用 AnGIneer" sub-title="工程智能辅助设计平台">
+      <template #extra>
+        <a-space>
+          <a-button type="primary" @click="openKnowledge">打开知识库</a-button>
+          <a-button @click="openSOP">查看 SOP</a-button>
+        </a-space>
+      </template>
+    </a-result>
+    
+    <a-divider />
+    
+    <a-row :gutter="16" class="quick-actions">
+      <a-col :span="8">
+        <a-card hoverable @click="openKnowledge">
+          <template #cover>
+            <div class="card-icon"><BookOutlined /></div>
+          </template>
+          <a-card-meta title="知识库" description="浏览工程规范、标准文档" />
+        </a-card>
+      </a-col>
+      <a-col :span="8">
+        <a-card hoverable @click="openSOP">
+          <template #cover>
+            <div class="card-icon"><ApiOutlined /></div>
+          </template>
+          <a-card-meta title="SOP 流程" description="执行标准作业流程" />
+        </a-card>
+      </a-col>
+      <a-col :span="8">
+        <a-card hoverable @click="openGIS">
+          <template #cover>
+            <div class="card-icon"><EnvironmentOutlined /></div>
+          </template>
+          <a-card-meta title="GIS 视图" description="地理信息可视化" />
+        </a-card>
+      </a-col>
+    </a-row>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { BookOutlined, ApiOutlined, EnvironmentOutlined } from '@ant-design/icons-vue'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+const openKnowledge = () => {
+  router.push('/document/kb-1-ch1')
+}
+
+const openSOP = () => {
+  router.push('/sop/sop-1')
+}
+
+const openGIS = () => {
+  router.push('/gis')
+}
+</script>
+
+<style lang="less" scoped>
+.home-view {
+  padding: 24px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.quick-actions {
+  margin-top: 24px;
+}
+
+.card-icon {
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+  color: #1890ff;
+  background: linear-gradient(135deg, #e6f7ff 0%, #f0f5ff 100%);
+}
+</style>

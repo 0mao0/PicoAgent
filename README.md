@@ -448,19 +448,43 @@ tests/
     └── test_05_Q1_with_reports.py
 ```
 
-### 4.4 运行服务
+### 4.4 一键启动
 
-1.  **配置密钥**: 在 `.env` 中设置 `LLM_API_KEY`。
-2.  **启动 API Server**:
-    ```bash
-    python apps/api-server/main.py
-    ```
-3.  **启动 Web Console**:
-    ```bash
-    cd apps/web-console
-    pnpm install
-    pnpm run dev
-    ```
+项目提供了一键启动脚本，自动检查环境、安装依赖并启动服务：
+
+**Windows 用户：**
+```bash
+# 方式1: 双击运行
+start.bat
+
+# 方式2: PowerShell
+.\start.ps1
+```
+
+**手动启动：**
+```bash
+# 安装前端依赖
+pnpm install
+
+# 安装后端依赖
+pip install -e services/angineer-core/src -e services/sop-core/src -e services/docs-core/src -e services/geo-core/src -e services/engtools/src
+
+# 启动开发服务器 (前端 + 后端)
+pnpm dev
+
+# 或分别启动
+pnpm dev:frontend   # 前端: http://localhost:3000
+pnpm dev:backend    # 后端: http://localhost:8000
+```
+
+**可用脚本：**
+| 命令 | 说明 |
+|:---|:---|
+| `pnpm dev` | 同时启动前端和后端开发服务器 |
+| `pnpm dev:frontend` | 仅启动前端 (localhost:3000) |
+| `pnpm dev:backend` | 仅启动后端 (localhost:8000) |
+| `pnpm build` | 构建所有前端包 |
+| `pnpm lint` | 代码检查 |
 
 ---
 *AnGIneer - Re-engineering the Future of Engineering.*
