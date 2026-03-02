@@ -11,7 +11,7 @@
         @expand="onExpand"
         @select="onSelect"
       >
-        <template #title="{ title, icon, isDoc }">
+        <template #title="{ title, icon }">
           <span>
             <component :is="icon" v-if="icon" style="margin-right: 4px" />
             {{ title }}
@@ -24,7 +24,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { BookOutlined, FileTextOutlined, FolderOutlined } from '@ant-design/icons-vue'
+import { BookOutlined, FileTextOutlined } from '@ant-design/icons-vue'
 import { useWorkbenchStore } from '@/stores/workbench'
 
 const workbenchStore = useWorkbenchStore()

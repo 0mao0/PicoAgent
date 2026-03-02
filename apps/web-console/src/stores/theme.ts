@@ -13,13 +13,8 @@ export const useThemeStore = defineStore('theme', () => {
   }
 
   watch(isDark, (newVal) => {
-    if (newVal) {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
-    }
     localStorage.setItem('angineer-theme', newVal ? 'dark' : 'light')
-  }, { immediate: true })
+  })
 
   const initTheme = () => {
     const savedTheme = localStorage.getItem('angineer-theme')

@@ -1,5 +1,5 @@
 <template>
-  <div class="workbench-container">
+  <div class="workbench-container" :class="{ 'dark-mode': themeStore.isDark }">
     <div class="tabs-bar">
       <a-tabs v-model:activeKey="activeTab" type="editable-card" hide-add>
         <a-tab-pane v-for="tab in tabs" :key="tab.key" :closable="tabs.length > 1">
@@ -25,8 +25,10 @@
 import { computed } from 'vue'
 import { FileTextOutlined, ApiOutlined, EnvironmentOutlined } from '@ant-design/icons-vue'
 import { useWorkbenchStore } from '@/stores/workbench'
+import { useThemeStore } from '@/stores'
 
 const workbenchStore = useWorkbenchStore()
+const themeStore = useThemeStore()
 
 const activeTab = computed({
   get: () => workbenchStore.activeTab,
@@ -73,21 +75,32 @@ const getIcon = (type: string) => {
   flex-direction: column;
   background: #fff;
   transition: background-color 0.3s;
+}
 
-  :global(html.dark) & {
-    background: @dark-background-color-light;
+.workbench-container:not(.dark-mode) {
+  .tabs-bar {
+    background: #fff;
+    border-bottom: 1px solid @border-color-light;
+  }
+  
+  .content-area {
+    background: #f5f5f5;
+  }
+}
+
+.workbench-container.dark-mode {
+  .tabs-bar {
+    background: #1f1f1f;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  
+  .content-area {
+    background: #141414;
   }
 }
 
 .tabs-bar {
-  background: #fff;
-  border-bottom: 1px solid @border-color-light;
   transition: background-color 0.3s, border-color 0.3s;
-
-  :global(html.dark) & {
-    background: @dark-background-color-light;
-    border-bottom-color: @dark-border-color-light;
-  }
 
   :deep(.ant-tabs) {
     .ant-tabs-nav {
@@ -100,12 +113,7 @@ const getIcon = (type: string) => {
 .content-area {
   flex: 1;
   overflow: hidden;
-  background: #f5f5f5;
   transition: background-color 0.3s;
-
-  :global(html.dark) & {
-    background: @dark-background-color;
-  }
 }
 
 .empty-state {

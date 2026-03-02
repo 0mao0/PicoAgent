@@ -1,5 +1,5 @@
 <template>
-  <div class="left-panel-container">
+  <div class="left-panel-container" :class="{ 'dark-mode': themeStore.isDark }">
     <a-tabs v-model:activeKey="activeTab" class="resource-tabs">
       <a-tab-pane key="knowledge" tab="知识库">
         <div class="knowledge-panel">
@@ -25,7 +25,9 @@ import { ref } from 'vue'
 import { KnowledgeTree, SearchBox } from '@angineer/docs-ui'
 import SOPSidebar from './sidebar/SOPSidebar.vue'
 import ProjectSidebar from './sidebar/ProjectSidebar.vue'
+import { useThemeStore } from '@/stores'
 
+const themeStore = useThemeStore()
 const activeTab = ref('knowledge')
 
 const onSearch = (query: string) => {
@@ -48,45 +50,51 @@ const onSelectDoc = (node: any) => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border-right: 1px solid @border-color-light;
-  transition: background-color 0.3s, border-color 0.3s;
+  transition: all 0.3s ease;
+}
 
-  :global(html.dark) & {
-    background: @dark-background-color-light;
-    border-right-color: @dark-border-color-light;
+.left-panel-container:not(.dark-mode) {
+  background: #ffffff;
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.left-panel-container.dark-mode {
+  background: #1f1f1f;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.resource-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.ant-tabs-nav) {
+    margin: 0;
+    padding: 0 16px;
+    flex-shrink: 0;
+    transition: background-color 0.3s ease;
   }
 
-  .resource-tabs {
+  .left-panel-container:not(.dark-mode) & :deep(.ant-tabs-nav) {
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  .left-panel-container.dark-mode & :deep(.ant-tabs-nav) {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  :deep(.ant-tabs-content-holder) {
+    flex: 1;
+    overflow: hidden;
+  }
+
+  :deep(.ant-tabs-content) {
     height: 100%;
-    display: flex;
-    flex-direction: column;
+  }
 
-    :deep(.ant-tabs-nav) {
-      margin: 0;
-      padding: 0 12px;
-      background: #fafafa;
-      flex-shrink: 0;
-      transition: background-color 0.3s;
-    }
-
-    :global(html.dark) & :deep(.ant-tabs-nav) {
-      background: @dark-border-color-light;
-    }
-
-    :deep(.ant-tabs-content-holder) {
-      flex: 1;
-      overflow: hidden;
-    }
-
-    :deep(.ant-tabs-content) {
-      height: 100%;
-    }
-
-    :deep(.ant-tabs-tabpane) {
-      height: 100%;
-      overflow-y: auto;
-    }
+  :deep(.ant-tabs-tabpane) {
+    height: 100%;
+    overflow-y: auto;
   }
 }
 
@@ -95,6 +103,7 @@ const onSelectDoc = (node: any) => {
   display: flex;
   flex-direction: column;
   padding: 12px;
-  gap: 12px;
+  gap: 8px;
+  overflow: hidden;
 }
 </style>

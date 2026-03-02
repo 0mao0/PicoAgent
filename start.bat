@@ -6,13 +6,31 @@ echo ========================================
 echo.
 
 echo [1/3] 检查 Node.js...
+
+rem 尝试直接使用 node 命令
+node --version >nul 2>&1
+if errorlevel 1 (
+    rem 尝试常见的 Node.js 安装路径
+    if exist "C:\Program Files\nodejs\node.exe" (
+        set "PATH=C:\Program Files\nodejs;%PATH%"
+        node --version >nul 2>&1
+    ) else if exist "C:\Program Files (x86)\nodejs\node.exe" (
+        set "PATH=C:\Program Files (x86)\nodejs;%PATH%"
+        node --version >nul 2>&1
+    ) else if exist "%LOCALAPPDATA%\nvs\current\node.exe" (
+        set "PATH=%LOCALAPPDATA%\nvs\current;%PATH%"
+        node --version >nul 2>&1
+    )
+)
+
 node --version >nul 2>&1
 if errorlevel 1 (
     echo [错误] 未安装 Node.js，请先安装 Node.js >= 18.12.0
     pause
     exit /b 1
 )
-echo        Node.js 已安装
+for /f "tokens=*" %%i in ('node --version') do set NODE_VER=%%i
+echo        Node.js 已安装: %NODE_VER%
 
 echo.
 echo [2/3] 检查 pnpm...

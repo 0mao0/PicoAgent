@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-panel-container">
+  <div class="chat-panel-container" :class="{ 'dark-mode': themeStore.isDark }">
     <div class="chat-messages" ref="messagesRef">
       <div v-for="msg in messages" :key="msg.id" :class="['message', msg.role]">
         <div class="message-content">
@@ -54,8 +54,10 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { useThemeStore } from '@/stores'
 
 const chatStore = useChatStore()
+const themeStore = useThemeStore()
 
 const selectedModel = ref('gpt-4')
 const inputText = ref('')
@@ -94,12 +96,38 @@ const removeContext = (id: string) => {
   display: flex;
   flex-direction: column;
   background: #fff;
-  border-left: 1px solid @border-color-light;
+  border-left: 1px solid rgba(0, 0, 0, 0.06);
   transition: background-color 0.3s, border-color 0.3s;
+}
 
-  :global(html.dark) & {
-    background: @dark-background-color-light;
-    border-left-color: @dark-border-color-light;
+.chat-panel-container:not(.dark-mode) {
+  .chat-messages {
+    .message.assistant .assistant-message {
+      background: #f5f5f5;
+    }
+    .references .ref-title {
+      color: #666;
+    }
+  }
+  .chat-input {
+    border-top-color: rgba(0, 0, 0, 0.06);
+  }
+}
+
+.chat-panel-container.dark-mode {
+  background: #1f1f1f;
+  border-left-color: rgba(255, 255, 255, 0.08);
+  
+  .chat-messages {
+    .message.assistant .assistant-message {
+      background: #2a2a2a;
+    }
+    .references .ref-title {
+      color: rgba(255, 255, 255, 0.45);
+    }
+  }
+  .chat-input {
+    border-top-color: rgba(255, 255, 255, 0.08);
   }
 }
 
@@ -125,15 +153,10 @@ const removeContext = (id: string) => {
 
     &.assistant {
       .assistant-message {
-        background: #f5f5f5;
         padding: 12px;
         border-radius: 8px;
         max-width: 90%;
         transition: background-color 0.3s;
-      }
-
-      :global(html.dark) & .assistant-message {
-        background: @dark-border-color-light;
       }
     }
   }
@@ -142,25 +165,15 @@ const removeContext = (id: string) => {
     margin-top: 8px;
     .ref-title {
       font-size: 12px;
-      color: #666;
       margin-bottom: 4px;
       transition: color 0.3s;
-    }
-
-    :global(html.dark) & .ref-title {
-      color: @dark-text-color-secondary;
     }
   }
 }
 
 .chat-input {
   padding: 12px;
-  border-top: 1px solid @border-color-light;
   transition: border-color 0.3s;
-
-  :global(html.dark) & {
-    border-top-color: @dark-border-color-light;
-  }
 
   .context-hint {
     margin-bottom: 8px;

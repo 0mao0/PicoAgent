@@ -30,7 +30,7 @@ apps/
 
 ```mermaid
 flowchart TB
-    subgraph Apps["应用层"]
+    subgraph Apps ["应用层"]
         WC["web-console<br/>(唯一 Vue 应用)"]
     end
 

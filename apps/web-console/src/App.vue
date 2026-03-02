@@ -1,6 +1,6 @@
 <template>
-  <a-config-provider :locale="zhCN">
-    <div class="app-container">
+  <a-config-provider :locale="zhCN" :theme="theme">
+    <div class="app-container" :class="{ 'dark-mode': themeStore.isDark }">
       <Header />
       <SplitPanes 
         class="main-content" 
@@ -23,12 +23,25 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
+import { theme as antTheme } from 'ant-design-vue'
 import Header from './layouts/Header.vue'
 import SplitPanes from './layouts/SplitPanes.vue'
 import LeftPanel from './layouts/LeftPanel.vue'
 import Workbench from './layouts/Workbench.vue'
 import ChatPanel from './layouts/ChatPanel.vue'
+import { useThemeStore } from '@/stores'
+
+const themeStore = useThemeStore()
+
+const theme = computed(() => ({
+  algorithm: themeStore.isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
+  token: {
+    colorPrimary: '#667eea',
+    borderRadius: 8,
+  },
+}))
 
 const handleResize = (leftSize: number, rightSize: number) => {
   console.log('Resize:', leftSize, rightSize)
@@ -51,7 +64,15 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: #1f1f1f;
+  transition: background-color 0.3s ease;
+}
+
+.app-container:not(.dark-mode) {
+  background-color: #f5f5f5;
+}
+
+.app-container.dark-mode {
+  background-color: #141414;
 }
 
 .main-content {
