@@ -1,7 +1,10 @@
 <template>
   <div class="left-panel-container" :class="{ 'dark-mode': themeStore.isDark }">
     <a-tabs v-model:activeKey="activeTab" class="resource-tabs">
-      <a-tab-pane key="knowledge" tab="知识库">
+      <a-tab-pane key="project" tab="项目">
+        <ProjectSidebar />
+      </a-tab-pane>
+      <a-tab-pane key="knowledge" tab="知识">
         <div class="knowledge-panel">
           <SearchBox 
             @search="onSearch" 
@@ -10,11 +13,8 @@
           <KnowledgeTree @select="onSelectDoc" />
         </div>
       </a-tab-pane>
-      <a-tab-pane key="sop" tab="SOP">
+      <a-tab-pane key="sop" tab="经验">
         <SOPSidebar />
-      </a-tab-pane>
-      <a-tab-pane key="project" tab="项目">
-        <ProjectSidebar />
       </a-tab-pane>
     </a-tabs>
   </div>

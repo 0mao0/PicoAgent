@@ -20,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 
 /**
  * 三栏可调整面板组件 - 支持左右两侧面板宽度拖拽调整
@@ -91,8 +91,10 @@ const onRightResize = (e: MouseEvent) => {
   if (!containerRef.value) return
 
   const containerRect = containerRef.value.getBoundingClientRect()
+  // 计算右侧面板的新宽度：容器右边 - 鼠标位置
   let newWidth = containerRect.right - e.clientX
 
+  // 限制在最小和最大宽度之间
   newWidth = Math.max(props.rightMin, Math.min(props.rightMax, newWidth))
   rightSize.value = newWidth
   emit('resize', leftSize.value, rightSize.value)
@@ -118,19 +120,44 @@ const initSizes = () => {
   if (!containerRef.value) return
 
   const containerWidth = containerRef.value.offsetWidth
+  // 只有在获取到有效宽度时才初始化
+  if (containerWidth === 0) return
+
   leftSize.value = Math.max(props.leftMin, Math.min(props.leftMax, containerWidth * props.initialLeftRatio))
   rightSize.value = Math.max(props.rightMin, Math.min(props.rightMax, containerWidth * props.initialRightRatio))
 }
 
+// ResizeObserver 实例
+let resizeObserver: ResizeObserver | null = null
+
 onMounted(() => {
-  // 使用 nextTick 确保 DOM 已渲染完成，获取正确的容器宽度
-  nextTick(() => {
-    initSizes()
-  })
+  // 使用 ResizeObserver 监听容器尺寸变化
+  if (containerRef.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) {
+          initSizes()
+        }
+      }
+    })
+    resizeObserver.observe(containerRef.value)
+  } else {
+    // 降级方案：使用 nextTick 和 setTimeout
+    nextTick(() => {
+      initSizes()
+      // 延迟再次初始化，确保父容器布局完成
+      setTimeout(initSizes, 100)
+    })
+  }
+
   window.addEventListener('resize', initSizes)
 })
 
 onUnmounted(() => {
+  if (resizeObserver && containerRef.value) {
+    resizeObserver.unobserve(containerRef.value)
+    resizeObserver.disconnect()
+  }
   window.removeEventListener('resize', initSizes)
   document.removeEventListener('mousemove', onLeftResize)
   document.removeEventListener('mouseup', stopLeftResize)
@@ -163,12 +190,13 @@ onUnmounted(() => {
 }
 
 .splitter {
-  width: 4px;
-  background: transparent;
+  width: 6px;
+  background: rgba(0, 0, 0, 0.05);
   cursor: col-resize;
   flex-shrink: 0;
   transition: background 0.2s;
   position: relative;
+  z-index: 10;
 
   &:hover,
   &.resizing {
@@ -183,7 +211,7 @@ onUnmounted(() => {
     transform: translate(-50%, -50%);
     width: 2px;
     height: 40px;
-    background: rgba(0, 0, 0, 0.1);
+    background: rgba(0, 0, 0, 0.15);
     border-radius: 1px;
   }
 }

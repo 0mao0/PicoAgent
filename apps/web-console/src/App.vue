@@ -23,14 +23,16 @@
           <Workbench />
         </template>
         <template #right>
-          <RagChat
-            ref="ragChatRef"
-            title="AI 对话"
-            :placeholder="'输入消息，@ 引用知识库内容...'"
-            :context-items="contextItems"
-            @send="handleRagSend"
-            @remove-context="removeContext"
-          />
+          <Panel title="AI 对话" :icon="MessageOutlined">
+            <AIChat
+              ref="aiChatRef"
+              title=""
+              placeholder="输入消息，Enter 发送..."
+              :show-context-info="true"
+              @send="handleChatSend"
+              @ready="handleChatReady"
+            />
+          </Panel>
         </template>
       </SplitPanes>
     </div>
@@ -39,32 +41,37 @@
 
 <script setup lang="ts">
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { ref, computed } from 'vue'
-import { AppHeader, SplitPanes, useTheme, type NavItem } from '@angineer/ui-kit'
-import { RagChat } from '@angineer/docs-ui'
+import { ref, onMounted } from 'vue'
+import { MessageOutlined } from '@ant-design/icons-vue'
+import { AppHeader, SplitPanes, Panel, useTheme, type NavItem } from '@angineer/ui-kit'
+import { AIChat } from '@angineer/docs-ui'
 import LeftPanel from './layouts/LeftPanel.vue'
 import Workbench from './layouts/Workbench.vue'
-import { useChatStore } from '@/stores/chat'
+import { useChatStore } from './stores/chat'
 
 const { isDark, themeConfig, appClass, toggleTheme } = useTheme()
+const aiChatRef = ref<InstanceType<typeof AIChat> | null>(null)
 const chatStore = useChatStore()
-const ragChatRef = ref<InstanceType<typeof RagChat> | null>(null)
 
-// 计算属性
-const contextItems = computed(() => chatStore.contextItems)
+// 组件挂载时获取模型列表
+onMounted(() => {
+  chatStore.fetchModels()
+})
 
-// 处理 RAG 发送消息
-const handleRagSend = async (message: string, model: string) => {
+// 处理 AI Chat 准备就绪
+const handleChatReady = () => {
+  console.log('AI Chat 组件已就绪')
+}
+
+// 处理发送消息
+const handleChatSend = async (message: string, _model: string) => {
   try {
-    await chatStore.sendMessage(message, model)
+    await chatStore.sendMessage(message, (_chunk) => {
+      // 可以在这里处理每个 chunk，如果需要的话
+    })
   } catch (error) {
     console.error('发送消息失败:', error)
   }
-}
-
-// 移除上下文引用
-const removeContext = (id: string) => {
-  chatStore.removeContextItem(id)
 }
 
 // 导航项配置
@@ -74,11 +81,7 @@ const navItems: NavItem[] = [
   { key: 'experience', label: '经验库' }
 ]
 
-// 处理导航点击
-const handleNavClick = (key: string) => {
-  console.log('Nav clicked:', key)
-  // TODO: 实现导航切换逻辑
-}
+
 
 // 跳转到管理后台
 const goToAdmin = () => {

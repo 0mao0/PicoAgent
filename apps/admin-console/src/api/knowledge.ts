@@ -46,6 +46,17 @@ export const knowledgeApi = {
   parseDocument: (libraryId: string, docId: string, filePath: string) => 
     api.post('/knowledge/parse', null, { params: { library_id: libraryId, doc_id: docId, file_path: filePath } }),
 
+  // 上传文档
+  uploadDocument: (libraryId: string, file: File, parentId?: string) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('library_id', libraryId)
+    if (parentId) formData.append('parent_id', parentId)
+    return api.post('/knowledge/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+
   // RAG
   ragQuery: (question: string, libraryId: string = 'default', k: number = 4, useLlm: boolean = true) => 
     api.post('/knowledge/rag/query', null, { params: { question, library_id: libraryId, k, use_llm: useLlm } }),

@@ -40,7 +40,7 @@
 
     <!-- 右侧：导航标签 + 操作按钮 -->
     <div class="header-right">
-      <a-space size="small">
+      <a-space :size="4">
         <!-- 导航标签 -->
         <div v-if="navItems.length" class="nav-tabs">
           <a-button
@@ -244,8 +244,8 @@ const toggleTheme = () => {
 .nav-tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-right: 16px;
+  gap: 4px;
+  margin-right: 8px;
 
   .ant-btn {
     font-size: 14px;
@@ -274,6 +274,10 @@ const toggleTheme = () => {
 
   .btn-text {
     margin-left: 4px;
+  }
+
+  :deep(.ant-btn) {
+    padding: 0 4px;
   }
 }
 </style>

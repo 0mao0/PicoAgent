@@ -1,12 +1,12 @@
 """
 LLM 客户端实现，负责读取统一配置并提供对话调用能力。
-支持超时、重试、熔断机制。
+支持超时、重试、熔断机制，支持流式输出。
 """
 import os
 import time
 import json
 import threading
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Iterator, Generator
 from datetime import datetime, timedelta
 from enum import Enum
 from functools import wraps
@@ -288,30 +288,30 @@ class LLMClient:
     ) -> str:
         """
         调用 OpenAI 兼容的 API。
-        
+
         Args:
             config: 模型配置
             messages: 消息列表
             temperature: 温度参数
             timeout_config: 超时配置
-        
+
         Returns:
             模型响应内容
         """
         base_url = config.base_url
         if base_url.endswith("/chat/completions"):
             base_url = base_url.replace("/chat/completions", "")
-        
+
         client = OpenAI(
             api_key=config.api_key,
             base_url=base_url,
             timeout=timeout_config.total
         )
-        
+
         extra_body = {}
         if "dashscope" in config.base_url or "aliyun" in config.base_url:
             extra_body["enable_thinking"] = False
-        
+
         response = client.chat.completions.create(
             model=config.model,
             messages=messages,
@@ -319,8 +319,54 @@ class LLMClient:
             max_tokens=self._config.llm.max_tokens,
             extra_body=extra_body if extra_body else None
         )
-        
+
         return response.choices[0].message.content
+
+    def _call_openai_stream(
+        self,
+        config: LLMModelConfig,
+        messages: List[Dict],
+        temperature: float,
+        timeout_config: TimeoutConfig
+    ) -> Generator[str, None, None]:
+        """
+        调用 OpenAI 兼容的 API（流式输出）。
+
+        Args:
+            config: 模型配置
+            messages: 消息列表
+            temperature: 温度参数
+            timeout_config: 超时配置
+
+        Yields:
+            模型响应的每个 token
+        """
+        base_url = config.base_url
+        if base_url.endswith("/chat/completions"):
+            base_url = base_url.replace("/chat/completions", "")
+
+        client = OpenAI(
+            api_key=config.api_key,
+            base_url=base_url,
+            timeout=timeout_config.total
+        )
+
+        extra_body = {}
+        if "dashscope" in config.base_url or "aliyun" in config.base_url:
+            extra_body["enable_thinking"] = False
+
+        response = client.chat.completions.create(
+            model=config.model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=self._config.llm.max_tokens,
+            extra_body=extra_body if extra_body else None,
+            stream=True
+        )
+
+        for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
     
     def chat(
         self,
@@ -396,6 +442,83 @@ class LLMClient:
                 last_error = e
                 continue
         
+        raise last_error or ValueError("所有 LLM 配置均失败")
+
+    def chat_stream(
+        self,
+        messages: List[Dict],
+        temperature: Optional[float] = None,
+        model: Optional[str] = None,
+        mode: str = "instruct",
+        config_name: Optional[str] = None
+    ) -> Generator[str, None, None]:
+        """
+        发送对话请求并以流式方式获取响应。
+
+        Args:
+            messages: 消息列表
+            temperature: 生成温度，默认使用配置值
+            model: 可选，指定使用的模型 ID
+            mode: 运行模式 ('thinking', 'instruct')，默认 'instruct'
+            config_name: 可选，指定使用的配置名称
+
+        Yields:
+            模型生成的每个 token
+
+        Raises:
+            ValueError: 未找到有效的配置
+            Exception: 所有配置都失败
+        """
+        env_mode = os.getenv("FORCE_LLM_MODE")
+        if env_mode:
+            mode = env_mode
+
+        temp = temperature if temperature is not None else self._config.llm.temperature
+        processed_messages = self._prepare_messages(messages, mode)
+
+        # 如果传入了 model 参数，优先使用 model 作为配置名称过滤
+        target_config_name = model if model else config_name
+        model_configs = self._get_model_configs(target_config_name)
+
+        if not model_configs:
+            raise ValueError(f"未找到有效的 LLM 配置 (config_name={config_name})")
+
+        last_error = None
+
+        for config in model_configs:
+            circuit_breaker = self._circuit_breakers.get(config.name)
+
+            if circuit_breaker and not circuit_breaker.can_execute():
+                logger.warning(f"熔断器已打开，跳过配置: {config.name}")
+                continue
+
+            self._log_request(config.name, config.model, config.base_url, mode, processed_messages)
+            start_time = time.time()
+
+            try:
+                for token in self._call_openai_stream(
+                    config, processed_messages, temp, self._config.llm.timeout
+                ):
+                    yield token
+
+                duration = time.time() - start_time
+                logger.info(f"[流式输出完成] 耗时: {duration:.2f}秒")
+
+                if circuit_breaker:
+                    circuit_breaker.record_success()
+
+                return
+
+            except Exception as e:
+                duration = time.time() - start_time
+                self._log_error(e, duration)
+
+                if circuit_breaker:
+                    circuit_breaker.record_failure()
+
+                last_error = e
+                continue
+
         raise last_error or ValueError("所有 LLM 配置均失败")
     
     def _call_with_retry(

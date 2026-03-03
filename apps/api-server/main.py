@@ -6,7 +6,7 @@ import asyncio
 import time
 import sys
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File as FastAPIFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -77,6 +77,35 @@ class SOPUpdate(BaseModel):
 
 class KnowledgeUpdate(BaseModel):
     data: Dict[str, Any]
+
+# AI Chat 对话相关模型
+class ChatMessage(BaseModel):
+    """聊天消息"""
+    id: Optional[str] = None
+    role: str  # 'user', 'assistant', 'system'
+    content: str
+    timestamp: Optional[int] = None
+    images: Optional[List[str]] = None  # 多模态预留：base64 图片列表
+
+class ChatContext(BaseModel):
+    """扩展上下文"""
+    references: Optional[List[str]] = None  # 引用的规范/文档 ID
+
+class ChatRequest(BaseModel):
+    """AI 对话请求"""
+    message: str  # 当前用户输入
+    history: List[ChatMessage]  # 历史消息上下文
+    model: Optional[str] = None  # 使用的模型
+    mode: Optional[str] = 'chat'  # 对话模式: chat, reasoning, vision
+    context: Optional[ChatContext] = None  # 扩展上下文
+
+class ChatStreamEvent(BaseModel):
+    """流式响应事件"""
+    type: str  # 'start', 'chunk', 'end', 'error'
+    messageId: Optional[str] = None
+    content: Optional[str] = None
+    usage: Optional[Dict[str, int]] = None
+    error: Optional[str] = None
 
 # --- Global State for UI Tracking ---
 # We'll use a simple global list to store execution logs for the frontend to poll
@@ -282,10 +311,93 @@ def list_llm_configs():
     try:
         client = LLMClient()
         # 仅返回名称和模型，不返回 API Key 等敏感信息
-        return [{"name": c["name"], "model": c["model"], "configured": bool(c["api_key"])} for c in client.configs]
+        configs = [{"name": c["name"], "model": c["model"], "configured": bool(c["api_key"])} for c in client.configs]
+        # 优先返回 Qwen2.5-7B 作为默认模型
+        qwen_index = next((i for i, c in enumerate(configs) if "Qwen2.5-7B" in c["name"]), None)
+        if qwen_index is not None and qwen_index > 0:
+            configs.insert(0, configs.pop(qwen_index))
+        return configs
     except Exception as e:
         logger.error(f"获取 LLM 配置失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取模型配置失败: {str(e)}")
+
+
+@app.post("/api/chat")
+async def chat_stream(request: ChatRequest):
+    """
+    AI 对话流式接口
+
+    支持流式输出，前端通过 SSE 接收增量内容
+    """
+    async def event_stream():
+        try:
+            client = LLMClient()
+            message_id = f"msg-{int(time.time() * 1000)}"
+
+            # 发送开始事件
+            yield f"data: {json.dumps({'type': 'start', 'messageId': message_id}, ensure_ascii=False)}\n\n"
+
+            # 构建消息列表
+            messages = []
+
+            # 添加历史消息
+            for msg in request.history:
+                if msg.role in ['user', 'assistant', 'system']:
+                    messages.append({
+                        "role": msg.role,
+                        "content": msg.content
+                    })
+
+            # 添加当前用户消息
+            messages.append({
+                "role": "user",
+                "content": request.message
+            })
+
+            # 调用流式对话
+            full_content = ""
+            prompt_tokens = 0
+            completion_tokens = 0
+
+            # 估算 prompt tokens
+            for msg in messages:
+                prompt_tokens += len(msg["content"]) // 2  # 简化估算
+
+            for token in client.chat_stream(
+                messages=messages,
+                model=request.model,
+                mode=request.mode or "instruct"
+            ):
+                full_content += token
+                completion_tokens += 1
+
+                # 发送增量内容
+                yield f"data: {json.dumps({'type': 'chunk', 'content': token}, ensure_ascii=False)}\n\n"
+
+            # 发送结束事件
+            yield f"data: {json.dumps({
+                'type': 'end',
+                'usage': {
+                    'promptTokens': prompt_tokens,
+                    'completionTokens': completion_tokens
+                }
+            }, ensure_ascii=False)}\n\n"
+
+            yield "data: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"对话流错误: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # 禁用 Nginx 缓冲
+        }
+    )
 
 @app.get("/test_content/{test_id}")
 def get_test_content(test_id: str):
@@ -961,6 +1073,47 @@ def delete_knowledge_node(node_id: str):
         raise HTTPException(status_code=404, detail="Node not found")
     return {"status": "success"}
 
+@app.post("/api/knowledge/upload")
+async def upload_document(
+    library_id: str = Form(...),
+    file: UploadFile = FastAPIFile(...),
+    parent_id: Optional[str] = Form(None)
+):
+    """上传文档到知识库"""
+    from docs_core import knowledge_service, file_storage, KnowledgeNode
+    import uuid
+    from datetime import datetime
+
+    # 生成文档ID
+    doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+
+    # 读取文件内容
+    content = await file.read()
+
+    # 保存源文件
+    file_path = file_storage.save_source_file(library_id, doc_id, content)
+
+    # 创建知识库节点
+    node = KnowledgeNode(
+        id=doc_id,
+        title=file.filename,
+        type='document',
+        parent_id=parent_id,
+        library_id=library_id,
+        file_path=file_path,
+        status='pending',
+        created_at=datetime.now(),
+        updated_at=datetime.now()
+    )
+    knowledge_service.create_node(node)
+
+    return {
+        "status": "success",
+        "doc_id": doc_id,
+        "file_path": file_path,
+        "node": node
+    }
+
 @app.post("/api/knowledge/parse")
 def parse_document(library_id: str, doc_id: str, file_path: str):
     """解析文档"""
@@ -1072,4 +1225,4 @@ def update_document(library_id: str, doc_id: str, content: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8033)

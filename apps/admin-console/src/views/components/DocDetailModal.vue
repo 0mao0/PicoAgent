@@ -11,12 +11,12 @@
       <a-descriptions-item label="文档名称">{{ doc.title }}</a-descriptions-item>
       <a-descriptions-item label="文件类型">PDF 文档</a-descriptions-item>
       <a-descriptions-item label="解析状态">
-        <a-tag :color="getStatusColor(doc.status)">{{ getStatusText(doc.status) }}</a-tag>
+        <a-tag :color="getStatusColor(doc.status || 'pending')">{{ getStatusText(doc.status || 'pending') }}</a-tag>
       </a-descriptions-item>
       <a-descriptions-item label="共享状态">
         <a-switch
           :checked="doc.visible"
-          @change="(checked: boolean) => $emit('toggle-visible', doc!.key, checked)"
+          @change="(checked: boolean) => doc && $emit('toggle-visible', { ...doc, visible: checked })"
         />
         <span style="margin-left: 8px">{{ doc.visible ? '已共享到前台' : '仅本地可见' }}</span>
       </a-descriptions-item>
@@ -27,7 +27,7 @@
 
     <div class="detail-actions">
       <a-space>
-        <a-button type="primary" @click="$emit('view', doc?.key || '')">
+        <a-button type="primary" @click="doc && $emit('view', doc)">
           <EyeOutlined /> 查看文档
         </a-button>
         <a-button danger @click="handleDelete">
@@ -40,7 +40,8 @@
 
 <script setup lang="ts">
 import { EyeOutlined, DeleteOutlined } from '@ant-design/icons-vue'
-import type { TreeNode } from '@angineer/docs-ui'
+import { Modal } from 'ant-design-vue'
+import type { SmartTreeNode } from '@angineer/docs-ui'
 
 /**
  * 文档详情弹窗组件
@@ -50,7 +51,7 @@ interface Props {
   /** 弹窗可见性 */
   visible: boolean
   /** 文档数据 */
-  doc: TreeNode | null
+  doc: SmartTreeNode | null
   /** 获取文件夹名称 */
   getFolderName: (folderId: string) => string
   /** 获取状态颜色 */
@@ -63,17 +64,26 @@ const props = defineProps<Props>()
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
-  view: [docId: string]
-  delete: [docId: string]
-  'toggle-visible': [docId: string, visible: boolean]
+  view: [node: SmartTreeNode]
+  delete: [node: SmartTreeNode]
+  'toggle-visible': [node: SmartTreeNode]
 }>()
 
-/** 处理删除 */
+/** 处理删除 - 带确认对话框 */
 const handleDelete = () => {
-  if (props.doc) {
-    emit('delete', props.doc.key)
-    emit('update:visible', false)
-  }
+  if (!props.doc) return
+  
+  Modal.confirm({
+    title: '确认删除文件',
+    content: `确定要删除 "${props.doc.title}" 吗？删除后无法恢复。`,
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk() {
+      emit('delete', props.doc!)
+      emit('update:visible', false)
+    }
+  })
 }
 </script>
 

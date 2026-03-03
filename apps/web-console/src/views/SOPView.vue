@@ -10,7 +10,7 @@
           <template #icon>
             <CheckCircleFilled v-if="index < currentStep" />
             <LoadingOutlined v-else-if="index === currentStep" />
-            <CircleOutlined v-else />
+            <span v-else class="step-circle">{{ index + 1 }}</span>
           </template>
         </a-step>
       </a-steps>
@@ -29,7 +29,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { CheckCircleFilled, LoadingOutlined, CircleOutlined } from '@ant-design/icons-vue'
+import { CheckCircleFilled, LoadingOutlined } from '@ant-design/icons-vue'
 
 const route = useRoute()
 const sop = ref<any>(null)

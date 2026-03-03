@@ -98,7 +98,5 @@ html, body, #app {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  display: flex;
-  width: 100%;
 }
 </style>

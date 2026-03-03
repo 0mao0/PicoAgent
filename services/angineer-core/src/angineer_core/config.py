@@ -205,7 +205,14 @@ def load_llm_models_from_env() -> List[LLMModelConfig]:
         ))
     
     models.sort(key=lambda m: m.priority, reverse=True)
-    
+
+    # 设置默认模型优先级：优先 Qwen2.5-7B
+    for i, model in enumerate(models):
+        if 'Qwen2.5-7B' in model.name or 'qwen2.5-7b' in model.name.lower():
+            # 将 Qwen2.5-7B 移到最前面
+            models.insert(0, models.pop(i))
+            break
+
     return models
 
 
