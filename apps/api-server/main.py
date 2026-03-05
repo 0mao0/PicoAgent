@@ -5,6 +5,7 @@ import subprocess
 import asyncio
 import time
 import sys
+import uuid
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File as FastAPIFile, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -1041,7 +1042,8 @@ def create_knowledge_node(
     node_type: str,
     library_id: str = 'default',
     parent_id: str = None,
-    visible: bool = False
+    visible: bool = False,
+    sort_order: int = 0
 ):
     """创建知识库节点"""
     from docs_core import knowledge_service, KnowledgeNode
@@ -1052,12 +1054,13 @@ def create_knowledge_node(
         if parent_node.type != 'folder':
             raise HTTPException(status_code=400, detail="Parent node must be folder")
     node = KnowledgeNode(
-        id=f'node-{len(knowledge_service.nodes) + 1}',
+        id=f'node-{uuid.uuid4().hex[:8]}',
         title=title,
         type=node_type,
         library_id=library_id,
         parent_id=parent_id,
-        visible=visible
+        visible=visible,
+        sort_order=sort_order
     )
     return knowledge_service.create_node(node)
 
@@ -1066,7 +1069,8 @@ def update_knowledge_node(
     node_id: str,
     title: Optional[str] = None,
     parent_id: Optional[str] = None,
-    visible: Optional[bool] = None
+    visible: Optional[bool] = None,
+    sort_order: Optional[int] = None
 ):
     """更新知识库节点"""
     from docs_core import knowledge_service
@@ -1095,6 +1099,8 @@ def update_knowledge_node(
         kwargs['parent_id'] = normalized_parent_id
     if visible is not None:
         kwargs['visible'] = visible
+    if sort_order is not None:
+        kwargs['sort_order'] = max(0, sort_order)
     node = knowledge_service.update_node(node_id, **kwargs)
     return node
 
@@ -1115,9 +1121,8 @@ async def upload_document(
 ):
     """上传文档到知识库"""
     from docs_core import knowledge_service, file_storage, KnowledgeNode
-    import uuid
     from datetime import datetime
-    allowed_extensions = {'.pdf'}
+    allowed_extensions = {'.pdf', '.doc', '.docx', '.md'}
     ext = os.path.splitext(file.filename or '')[1].lower()
     if ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext or 'unknown'}")

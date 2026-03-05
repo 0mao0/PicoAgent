@@ -47,6 +47,13 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### 前后台拼装方式
+
+- 前台入口 [App.vue](file:///d:/AI/AnGIneer/apps/web-console/src/App.vue) 通过 [LeftPanel.vue](file:///d:/AI/AnGIneer/apps/web-console/src/layouts/LeftPanel.vue) 在「知识」Tab 挂载 SmartTree，使用只读参数集。
+- 后台入口 [KnowledgeManage.vue](file:///d:/AI/AnGIneer/apps/admin-console/src/views/KnowledgeManage.vue) 使用 TriplePane 三栏编排，左侧 SmartTree、中心预览、右侧 AIChat。
+- 前后台统一复用 [SmartTree.vue](file:///d:/AI/AnGIneer/packages/docs-ui/src/components/common/SmartTree.vue)，只通过 props/slots 区分能力，不维护分叉组件。
+- 后台外层“包一层”是业务编排容器，负责文件上传、解析链路、树操作、拖拽重排等流程聚合，属于合理分层。
+
 ### AIChat.vue Props
 
 | Prop | 类型 | 默认值 | 说明 |
@@ -149,6 +156,13 @@ const handleSend = async (message, model) => {
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### 前后台拼装方式
+
+- 前台入口 [App.vue](file:///d:/AI/AnGIneer/apps/web-console/src/App.vue) 通过 [LeftPanel.vue](file:///d:/AI/AnGIneer/apps/web-console/src/layouts/LeftPanel.vue) 在「知识」Tab 挂载 SmartTree，使用只读参数集。
+- 后台入口 [KnowledgeManage.vue](file:///d:/AI/AnGIneer/apps/admin-console/src/views/KnowledgeManage.vue) 使用 TriplePane 三栏编排，左侧 SmartTree、中心预览、右侧 AIChat。
+- 前后台统一复用 [SmartTree.vue](file:///d:/AI/AnGIneer/packages/docs-ui/src/components/common/SmartTree.vue)，只通过 props/slots 区分能力，不维护分叉组件。
+- 后台外层“包一层”是业务编排容器，负责文件上传、解析链路、树操作、拖拽重排等流程聚合，属于合理分层。
+
 ### Props
 
 | Prop | 类型 | 默认值 | 说明 |
@@ -156,9 +170,13 @@ const handleSend = async (message, model) => {
 | `treeData` | `SmartTreeNode[]` | `[]` | 树数据 |
 | `showSearch` | `boolean` | `true` | 是否显示搜索框 |
 | `searchPlaceholder` | `string` | `'搜索...'` | 搜索框占位符 |
-| `showStatus` | `boolean` | `false` | 是否显示状态标签 |
+| `showAddRootFolder` | `boolean` | `true` | 是否显示“新增一级目录”按钮 |
+| `addRootFolderText` | `string` | `'新增文件夹'` | 空状态按钮文本 |
+| `addRootFolderTitle` | `string` | `'新增一级目录'` | 搜索区按钮提示 |
+| `showStatus` | `boolean` | `true` | 是否显示状态标签 |
 | `draggable` | `boolean` | `false` | 是否可拖拽 |
-| `allowAddFile` | `boolean` | `false` | 是否允许添加文件 |
+| `allowAddFile` | `boolean` | `true` | 是否允许添加文件 |
+| `allowedFileTypes` | `string[]` | `['.pdf']` | 允许上传文件类型 |
 | `showIcon` | `boolean` | `true` | 是否显示图标 |
 | `emptyText` | `string` | `'暂无数据'` | 空状态文本 |
 | `loading` | `boolean` | `false` | 加载状态 |
@@ -175,6 +193,9 @@ const handleSend = async (message, model) => {
 | `view` | `(node: SmartTreeNode)` | 查看节点 |
 | `drop` | `(info: DropInfo)` | 拖拽完成 |
 | `search` | `(value: string)` | 搜索 |
+| `file-drop` | `(files: File[], targetFolder: SmartTreeNode \| null)` | 文件拖拽上传 |
+| `drop-invalid` | `(reason: string)` | 非法拖拽回调 |
+| `drop-root` | `(dragNodeKey: string)` | 拖拽到根目录回调 |
 
 ### Slots
 
@@ -194,7 +215,8 @@ const handleSend = async (message, model) => {
 <template>
   <SmartTree
     :tree-data="treeData"
-    :show-search="false"
+    :show-search="true"
+    :show-add-root-folder="false"
     :show-status="false"
     :draggable="false"
     :allow-add-file="false"
@@ -220,18 +242,24 @@ import { FolderOutlined, FileTextOutlined } from '@ant-design/icons-vue'
   <SmartTree
     :tree-data="treeData"
     :show-search="true"
+    :show-add-root-folder="true"
     :show-status="true"
     :draggable="true"
     :allow-add-file="true"
+    :allowed-file-types="['.pdf', '.doc', '.docx', '.md']"
     @select="onSelect"
     @add-folder="onAddFolder"
     @add-file="onAddFile"
     @delete="onDelete"
     @drop="onDrop"
+    @drop-root="onDropRoot"
   >
     <template #icon="{ node }">
       <FolderOutlined v-if="node.isFolder" style="color: #faad14" />
-      <FilePdfOutlined v-else style="color: #ff4d4f" />
+      <FilePdfOutlined v-else-if="getFileType(node?.title) === 'pdf'" style="color: #ff4d4f" />
+      <FileWordOutlined v-else-if="getFileType(node?.title) === 'word'" style="color: #1890ff" />
+      <FileMarkdownOutlined v-else-if="getFileType(node?.title) === 'markdown'" style="color: #13c2c2" />
+      <FileTextOutlined v-else style="color: #8c8c8c" />
     </template>
     <template #status="{ node }">
       <a-tag :color="node.visible ? 'green' : 'default'">
@@ -246,23 +274,45 @@ import { FolderOutlined, FileTextOutlined } from '@ant-design/icons-vue'
 
 ```typescript
 const onTreeDrop = async (info: any) => {
-  const { dragNode, dropNode, dropPosition } = info
-  
+  const { dragNode, node: dropNode } = info
   if (!dragNode || !dropNode) return
-  
-  const nodeId = dragNode.key
-  let newParentId: string | undefined
-  
-  if (dropPosition === 0) {
-    newParentId = dropNode.key  // 成为子节点
-  } else {
-    newParentId = dropNode.parentId  // 成为同级节点
-  }
-  
-  await knowledgeApi.updateNode(nodeId, { parent_id: newParentId })
-  await loadNodes()  // 刷新树
+
+  if (!info.dropToGap && !dropNode.dataRef?.isFolder) return
+
+  const newParentId = !info.dropToGap
+    ? dropNode.key
+    : (dropNode.dataRef?.parentId || null)
+
+  const siblings = calcSiblingsAfterDrop()
+  await Promise.all(
+    siblings.map((item, index) =>
+      knowledgeApi.updateNode(item.key, { parent_id: newParentId, sort_order: index })
+    )
+  )
+  await loadNodes(dragNode.key)
+}
+
+const onDropRoot = async (dragNodeKey: string) => {
+  await knowledgeApi.updateNode(dragNodeKey, { parent_id: null, sort_order: rootLastIndex })
+  await loadNodes(dragNodeKey)
 }
 ```
+
+### 可验收能力清单（当前实现）
+
+- 目录：支持根目录/任意父级创建、重命名、递归删除。
+- 文件：支持上传、删除、重命名、查看、解析状态展示。
+- 类型：后台上传策略统一为 `.pdf/.doc/.docx/.md`，前后端双重校验。
+- 搜索：按标题过滤节点并自动展开命中路径。
+- 拖拽：支持拖入目录、同级前后重排、拖到根目录，阻止拖入文件和拖入自身后代。
+- 交互：上传后自动刷新并定位选中新文件；树有数据时不再错误显示空状态。
+
+### 持久化与数据库
+
+- 知识树服务已使用 SQLite 持久化，见 [knowledge_api.py](file:///d:/AI/AnGIneer/services/docs-core/src/docs_core/api/knowledge_api.py)。
+- 默认数据库文件：`data/knowledge.sqlite3`。
+- `nodes` 表含 `sort_order` 字段，支持同级顺序持久化与重排。
+- 建议使用“整体后端统一数据库”，不建议为 SmartTree 单独建独立数据库。
 
 ---
 
@@ -318,8 +368,11 @@ interface SmartTreeNode {
   title: string         // 显示名称
   isFolder?: boolean    // 是否为文件夹
   isLeaf?: boolean      // 是否为叶子节点
+  parentId?: string     // 父节点 ID
+  filePath?: string     // 源文件路径
   status?: 'pending' | 'processing' | 'completed' | 'failed'
   visible?: boolean     // 是否可见（共享/本地）
+  sortOrder?: number    // 同级排序
   children?: SmartTreeNode[]
 }
 ```
@@ -336,6 +389,7 @@ class KnowledgeNode(BaseModel):
     parent_id: Optional[str] = None
     library_id: str
     file_path: Optional[str] = None
+    sort_order: int = 0
 ```
 
 ### ChatMessage

@@ -41,13 +41,17 @@
               @delete="handleDeleteNode"
               @view="showDocDetail"
               @drop="onTreeDrop"
+              @drop-root="onTreeDropRoot"
               @drop-invalid="onInvalidDrop"
               @file-drop="handleFileDrop"
             >
               <!-- 自定义图标 -->
               <template #icon="{ node }">
                 <FolderOutlined v-if="node?.isFolder" style="color: #faad14" />
-                <FilePdfOutlined v-else style="color: #ff4d4f" />
+                <FilePdfOutlined v-else-if="getFileType(node?.title) === 'pdf'" style="color: #ff4d4f" />
+                <FileWordOutlined v-else-if="getFileType(node?.title) === 'word'" style="color: #1890ff" />
+                <FileMarkdownOutlined v-else-if="getFileType(node?.title) === 'markdown'" style="color: #13c2c2" />
+                <FileTextOutlined v-else style="color: #8c8c8c" />
               </template>
 
               <!-- 自定义状态标签 -->
@@ -112,7 +116,7 @@
       v-model:visible="folderModalVisible"
       :title="folderModalTitle"
       :loading="modalLoading"
-      :folder-tree-data="[]"
+      :folder-tree-data="folderSelectTreeData"
       v-model:name="folderForm.name"
       v-model:parent-id="folderForm.parentId"
       :is-new="folderForm.isNew"
@@ -143,7 +147,11 @@ import {
   FolderOutlined,
   FolderAddOutlined,
   FileSearchOutlined,
-  MessageOutlined
+  MessageOutlined,
+  FilePdfOutlined,
+  FileWordOutlined,
+  FileMarkdownOutlined,
+  FileTextOutlined
 } from '@ant-design/icons-vue'
 
 // 导入 packages 中的组件和 composables
@@ -152,7 +160,6 @@ import { AIChat, SmartTree, type SmartTreeNode } from '@angineer/docs-ui'
 import { useKnowledgeTree, type TreeNode } from '@angineer/docs-ui'
 import { knowledgeApi } from '@/api/knowledge'
 import { useChatStore } from '@/stores/chat'
-import { FilePdfOutlined } from '@ant-design/icons-vue'
 
 // 使用主题
 const { isDark } = useTheme()
@@ -176,13 +183,14 @@ const {
   selectedNode,
   hasData,
   buildTree,
+  folderTreeData,
   getChildCount,
   getFolderName
 } = useKnowledgeTree()
 
 // AIChat 组件引用
 const aiChatRef = ref<InstanceType<typeof AIChat> | null>(null)
-const allowedFileTypes = ['.pdf']
+const allowedFileTypes = ['.pdf', '.doc', '.docx', '.md']
 
 // 面板尺寸状态
 const leftWidth = ref(350)
@@ -206,6 +214,10 @@ const docContent = ref('')
 
 // 计算属性
 const folderModalTitle = computed(() => folderForm.value.isNew ? '新建文件夹' : '重命名')
+const folderSelectTreeData = computed(() => [
+  { value: '__root__', title: '根目录' },
+  ...folderTreeData.value
+])
 
 // 面板调整大小回调
 const onPanelResize = (leftSize: number, _rightSize: number) => {
@@ -237,11 +249,57 @@ const getStatusText = (status: string) => {
   return texts[status] || '未知'
 }
 
+const getFileType = (fileName?: string) => {
+  const ext = String(fileName || '').toLowerCase().split('.').pop() || ''
+  if (ext === 'pdf') return 'pdf'
+  if (ext === 'doc' || ext === 'docx') return 'word'
+  if (ext === 'md' || ext === 'markdown') return 'markdown'
+  return 'file'
+}
+
 // 加载节点
-const loadNodes = async () => {
+const loadNodes = async (focusNodeKey?: string) => {
   try {
     const response = await knowledgeApi.getNodes('default', false) as unknown as any[]
     treeData.value = buildTree(response)
+    if (focusNodeKey) {
+      const findParentChain = (nodes: SmartTreeNode[], key: string, parents: string[] = []): string[] | null => {
+        for (const node of nodes) {
+          if (node.key === key) return parents
+          if (node.children?.length) {
+            const found = findParentChain(node.children, key, [...parents, node.key])
+            if (found) return found
+          }
+        }
+        return null
+      }
+      const findNode = (nodes: SmartTreeNode[], key: string): SmartTreeNode | null => {
+        for (const node of nodes) {
+          if (node.key === key) return node
+          if (node.children?.length) {
+            const found = findNode(node.children, key)
+            if (found) return found
+          }
+        }
+        return null
+      }
+      const parents = findParentChain(treeData.value as unknown as SmartTreeNode[], focusNodeKey) || []
+      if (smartTreeRef.value) {
+        smartTreeRef.value.expandedKeys = Array.from(new Set([
+          ...(smartTreeRef.value.expandedKeys || []),
+          ...parents
+        ]))
+        smartTreeRef.value.selectedKeys = [focusNodeKey]
+      }
+      selectedKeys.value = [focusNodeKey]
+      const node = findNode(treeData.value as unknown as SmartTreeNode[], focusNodeKey)
+      if (node) {
+        selectedNode.value = node as unknown as TreeNode
+        if (!node.isFolder && node.status === 'completed') {
+          await loadDocContent(node.key)
+        }
+      }
+    }
   } catch (error) {
     console.error('加载节点失败:', error)
     message.error('加载知识库节点失败')
@@ -423,9 +481,10 @@ const handleFileDrop = async (files: File[], targetFolder: SmartTreeNode | null)
 // 上传文件
 const uploadFile = async (file: File, parentId?: string) => {
   try {
-    await knowledgeApi.uploadDocument('default', file, parentId)
+    const result = await knowledgeApi.uploadDocument('default', file, parentId) as any
     message.success(`上传成功: ${file.name}`)
-    await loadNodes()
+    const focusNodeKey = result?.doc_id || result?.node?.id
+    await loadNodes(focusNodeKey)
   } catch (error) {
     message.error(`上传失败: ${file.name}`)
   }
@@ -450,6 +509,10 @@ const onTreeDrop = async (info: any) => {
   const nodeId = dragNode.key as string
   const isDropNodeFolder = dropNode.dataRef?.isFolder === true
   const dropToGap = info.dropToGap
+  const dropPos = String(dropNode.pos || '')
+  const dropPosParts = dropPos.split('-')
+  const dropNodeIndex = Number(dropPosParts[dropPosParts.length - 1] || 0)
+  const relativeDropPosition = (info.dropPosition as number) - dropNodeIndex
 
   if (!dropToGap && !isDropNodeFolder) {
     message.warning('不能将节点拖入文件')
@@ -483,14 +546,118 @@ const onTreeDrop = async (info: any) => {
     return
   }
 
-  const newParentId = !dropToGap ? (dropNode.key as string) : ((dropNode.dataRef?.parentId as string | undefined) || null)
+  const nextTree = JSON.parse(JSON.stringify(treeData.value as unknown as SmartTreeNode[])) as SmartTreeNode[]
+  let dragObj: SmartTreeNode | undefined
+
+  const removeNode = (nodes: SmartTreeNode[]): boolean => {
+    for (let i = 0; i < nodes.length; i++) {
+      if (nodes[i].key === nodeId) {
+        dragObj = nodes[i]
+        nodes.splice(i, 1)
+        return true
+      }
+      const childNodes = nodes[i].children
+      if (childNodes?.length && removeNode(childNodes)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  const insertIntoNode = (nodes: SmartTreeNode[], targetKey: string, node: SmartTreeNode): boolean => {
+    for (const current of nodes) {
+      if (current.key === targetKey) {
+        if (!current.children) current.children = []
+        current.children.push(node)
+        return true
+      }
+      if (current.children?.length && insertIntoNode(current.children, targetKey, node)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  const insertAtGap = (nodes: SmartTreeNode[], targetKey: string, node: SmartTreeNode): boolean => {
+    for (let i = 0; i < nodes.length; i++) {
+      if (nodes[i].key === targetKey) {
+        const insertIndex = relativeDropPosition < 0 ? i : i + 1
+        nodes.splice(insertIndex, 0, node)
+        return true
+      }
+      const childNodes = nodes[i].children
+      if (childNodes?.length && insertAtGap(childNodes, targetKey, node)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  const getSiblingList = (nodes: SmartTreeNode[], parentId: string | null): SmartTreeNode[] => {
+    if (!parentId) return nodes
+    const walk = (items: SmartTreeNode[]): SmartTreeNode | null => {
+      for (const item of items) {
+        if (item.key === parentId) return item
+        if (item.children?.length) {
+          const found = walk(item.children)
+          if (found) return found
+        }
+      }
+      return null
+    }
+    const parentNode = walk(nodes)
+    return parentNode?.children || []
+  }
+
+  const findParentIdByKey = (
+    nodes: SmartTreeNode[],
+    key: string,
+    parentId: string | null = null
+  ): string | null | undefined => {
+    for (const node of nodes) {
+      if (node.key === key) {
+        return parentId
+      }
+      if (node.children?.length) {
+        const found = findParentIdByKey(node.children, key, node.key)
+        if (found !== undefined) {
+          return found
+        }
+      }
+    }
+    return undefined
+  }
+
+  removeNode(nextTree)
+  if (!dragObj) {
+    await loadNodes()
+    return
+  }
+
+  if (!dropToGap) {
+    insertIntoNode(nextTree, dropNode.key as string, dragObj)
+  } else {
+    insertAtGap(nextTree, dropNode.key as string, dragObj)
+  }
+
+  const fallbackParentId = (dropNode.dataRef?.parentId as string | undefined) || null
+  const resolvedGapParentId = findParentIdByKey(nextTree, dropNode.key as string)
+  const newParentId = !dropToGap
+    ? (dropNode.key as string)
+    : (resolvedGapParentId === undefined ? fallbackParentId : resolvedGapParentId)
+
+  const siblings = getSiblingList(nextTree, newParentId)
 
   try {
-    await knowledgeApi.updateNode(nodeId, {
-      parent_id: newParentId
-    })
+    for (let index = 0; index < siblings.length; index++) {
+      const sibling = siblings[index]
+      await knowledgeApi.updateNode(sibling.key, {
+        parent_id: newParentId,
+        sort_order: index
+      })
+    }
     message.success('移动成功')
-    await loadNodes()
+    await loadNodes(nodeId)
   } catch (error: any) {
     message.error('移动失败: ' + (error.response?.data?.detail || error?.message || '未知错误'))
     await loadNodes()
@@ -504,6 +671,28 @@ const onInvalidDrop = async (reason: string) => {
     message.warning('不能拖拽到自身子级目录')
   }
   await loadNodes()
+}
+
+const onTreeDropRoot = async (dragNodeKey: string) => {
+  try {
+    const rootNodes = (treeData.value as unknown as SmartTreeNode[]).filter(node => node.key !== dragNodeKey)
+    for (let index = 0; index < rootNodes.length; index++) {
+      const node = rootNodes[index]
+      await knowledgeApi.updateNode(node.key, {
+        parent_id: null,
+        sort_order: index
+      })
+    }
+    await knowledgeApi.updateNode(dragNodeKey, {
+      parent_id: null,
+      sort_order: rootNodes.length
+    })
+    message.success('已移动到根目录')
+    await loadNodes(dragNodeKey)
+  } catch (error: any) {
+    message.error('移动失败: ' + (error.response?.data?.detail || error?.message || '未知错误'))
+    await loadNodes()
+  }
 }
 
 // ===== AI 对话相关 =====
@@ -552,8 +741,7 @@ onMounted(() => {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 8px;
-  // 确保容器有明确的宽度限制
+  padding: 5px;
   width: 100%;
   min-width: 0;
 }

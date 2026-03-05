@@ -71,7 +71,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { FileSearchOutlined, DownloadOutlined } from '@ant-design/icons-vue'
+import { FileSearchOutlined } from '@ant-design/icons-vue'
 import type { TreeNode } from '@angineer/docs-ui'
 import type { SmartTreeNode } from '@angineer/docs-ui'
 
@@ -88,7 +88,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {})
 
-const emit = defineEmits<{
+defineEmits<{
   parse: [node: SmartTreeNode]
   'toggle-visible': [node: SmartTreeNode]
 }>()

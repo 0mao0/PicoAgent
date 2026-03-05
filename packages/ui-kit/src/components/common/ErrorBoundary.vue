@@ -12,7 +12,7 @@
 <script setup lang="ts">
 import { ref, onErrorCaptured } from 'vue'
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   errorTitle?: string
 }>(), {
   errorTitle: '发生错误'

@@ -16,10 +16,10 @@
           @pressEnter="$emit('confirm')"
         />
       </a-form-item>
-      <a-form-item v-if="isNew && !parentId" label="父级文件夹（可选）">
+      <a-form-item v-if="isNew" label="父级文件夹（可选）">
         <a-tree-select
           :value="parentId"
-          @update:value="$emit('update:parent-id', $event)"
+          @update:value="onParentChange"
           :tree-data="folderTreeData"
           placeholder="选择父级文件夹"
           allow-clear
@@ -54,10 +54,14 @@ interface Props {
 
 defineProps<Props>()
 
-defineEmits<{
+const emit = defineEmits<{
   'update:visible': [value: boolean]
   'update:name': [value: string]
   'update:parent-id': [value: string | undefined]
   confirm: []
 }>()
+
+const onParentChange = (value: string | undefined) => {
+  emit('update:parent-id', value === '__root__' ? undefined : value)
+}
 </script>

@@ -183,5 +183,18 @@ onMounted(() => {
   padding: 12px;
   gap: 8px;
   overflow: hidden;
+  background: transparent;
+
+  :deep(.smart-tree) {
+    background: transparent;
+  }
+
+  :deep(.ant-tree-node-content-wrapper.ant-tree-node-selected) {
+    background: rgba(0, 0, 0, 0.06) !important;
+  }
+
+  :deep(.ant-tree-node-content-wrapper:hover) {
+    background: rgba(0, 0, 0, 0.04) !important;
+  }
 }
 </style>
