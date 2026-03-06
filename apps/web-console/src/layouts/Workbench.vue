@@ -1,7 +1,7 @@
 <template>
   <div class="workbench-container" :class="{ 'dark-mode': themeStore.isDark }">
     <div class="tabs-bar">
-      <a-tabs v-model:activeKey="activeTab" type="editable-card" hide-add>
+      <a-tabs v-model:activeKey="activeTab" type="editable-card" hide-add @edit="handleTabEdit">
         <a-tab-pane v-for="tab in tabs" :key="tab.key" :closable="tabs.length > 1">
           <template #tab>
             <span>
@@ -24,8 +24,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { FileTextOutlined, ApiOutlined, EnvironmentOutlined } from '@ant-design/icons-vue'
+import type { WorkbenchTabType } from '@angineer/docs-ui'
 import { useWorkbenchStore } from '@/stores/workbench'
 import { useThemeStore } from '@/stores'
+import DocumentView from '@/views/DocumentView.vue'
+import SOPView from '@/views/SOPView.vue'
+import GISView from '@/views/GISView.vue'
+import ProjectView from '@/views/ProjectView.vue'
 
 const workbenchStore = useWorkbenchStore()
 const themeStore = useThemeStore()
@@ -37,19 +42,17 @@ const activeTab = computed({
 
 const tabs = computed(() => workbenchStore.tabs)
 const currentTab = computed(() => tabs.value.find(t => t.key === activeTab.value))
+const viewerMap: Record<WorkbenchTabType, unknown> = {
+  document: DocumentView,
+  sop: SOPView,
+  gis: GISView,
+  code: DocumentView,
+  project: ProjectView
+}
 
 const currentViewer = computed(() => {
   if (!currentTab.value) return null
-  switch (currentTab.value.type) {
-    case 'document':
-      return 'DocumentViewer'
-    case 'sop':
-      return 'SOPViewer'
-    case 'gis':
-      return 'GISViewer'
-    default:
-      return null
-  }
+  return viewerMap[currentTab.value.type] || null
 })
 
 const getIcon = (type: string) => {
@@ -63,6 +66,13 @@ const getIcon = (type: string) => {
     default:
       return FileTextOutlined
   }
+}
+
+const handleTabEdit = (targetKey: string | MouseEvent | KeyboardEvent, action: 'add' | 'remove') => {
+  if (action !== 'remove' || typeof targetKey !== 'string') {
+    return
+  }
+  workbenchStore.closeTab(targetKey)
 }
 </script>
 

@@ -27,13 +27,7 @@
               v-else
               ref="smartTreeRef"
               :tree-data="treeData"
-              :show-search="true"
-              search-placeholder="搜索文档..."
-              :show-status="true"
-              :draggable="true"
-              :allow-add-file="true"
-              :allowed-file-types="allowedFileTypes"
-              empty-text="暂无文档"
+              v-bind="smartTreeProps"
               @select="onTreeSelect"
               @rename="showRenameModal"
               @add-folder="showCreateSubFolderModal"
@@ -156,7 +150,13 @@ import {
 
 // 导入 packages 中的组件和 composables
 import { SplitPanes, Panel, useTheme } from '@angineer/ui-kit'
-import { AIChat, SmartTree, type SmartTreeNode } from '@angineer/docs-ui'
+import {
+  AIChat,
+  SmartTree,
+  type SmartTreeNode,
+  createResourceNodeFromKnowledge,
+  createOpenResourcePayload
+} from '@angineer/docs-ui'
 import { useKnowledgeTree, type TreeNode } from '@angineer/docs-ui'
 import { knowledgeApi } from '@/api/knowledge'
 import { useChatStore } from '@/stores/chat'
@@ -218,6 +218,15 @@ const folderSelectTreeData = computed(() => [
   { value: '__root__', title: '根目录' },
   ...folderTreeData.value
 ])
+const smartTreeProps = {
+  showSearch: true,
+  searchPlaceholder: '搜索文档...',
+  showStatus: true,
+  draggable: true,
+  allowAddFile: true,
+  allowedFileTypes: allowedFileTypes,
+  emptyText: '暂无文档'
+}
 
 // 面板调整大小回调
 const onPanelResize = (leftSize: number, _rightSize: number) => {
@@ -445,7 +454,14 @@ const parseDocument = async (node: SmartTreeNode) => {
 
 // 查看文档
 const viewDocument = (node: SmartTreeNode) => {
-  console.log('查看文档:', node)
+  const resource = createResourceNodeFromKnowledge(node, 'default')
+  const payload = createOpenResourcePayload(resource)
+  if (!payload) {
+    message.warning('当前节点不可查看')
+    return
+  }
+  const targetUrl = `http://localhost:3005/document/${encodeURIComponent(String(payload.props.docId || node.key))}`
+  window.open(targetUrl, '_blank', 'noopener,noreferrer')
 }
 
 // 切换可见性

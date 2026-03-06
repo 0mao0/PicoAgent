@@ -31,6 +31,12 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { CheckCircleFilled, LoadingOutlined } from '@ant-design/icons-vue'
 
+const props = defineProps<{
+  sopId?: string
+  title?: string
+  description?: string
+}>()
+
 const route = useRoute()
 const sop = ref<any>(null)
 const currentStep = ref(0)
@@ -44,10 +50,10 @@ const steps = ref([
 ])
 
 onMounted(async () => {
-  const sopId = route.params.id as string
+  const sopId = (props.sopId || route.params.id || '') as string
   sop.value = {
     id: sopId,
-    title: '航道设计流程',
+    title: props.title || '航道设计流程',
     status: '执行中'
   }
 })

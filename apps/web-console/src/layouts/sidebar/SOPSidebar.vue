@@ -21,23 +21,20 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ApiOutlined } from '@ant-design/icons-vue'
-import { useWorkbenchStore } from '@/stores/workbench'
+import { createResourceNodeFromSop, type SopItem } from '@angineer/docs-ui'
+import { useResourceOpen } from '@/composables/useResourceOpen'
 
-const workbenchStore = useWorkbenchStore()
+const { openResource } = useResourceOpen()
 
-const sopList = ref([
+const sopList = ref<SopItem[]>([
   { id: 'sop-1', title: '航道设计流程', description: '进港航道设计标准流程' },
   { id: 'sop-2', title: '码头选址评估', description: '港址选择与评估流程' },
   { id: 'sop-3', title: '泊位通过能力计算', description: '泊位设计通过能力计算流程' }
 ])
 
-const openSOP = (sop: any) => {
-  workbenchStore.openTab({
-    key: sop.id,
-    type: 'sop',
-    title: sop.title,
-    props: { sopId: sop.id }
-  })
+const openSOP = (sop: SopItem) => {
+  const resource = createResourceNodeFromSop(sop)
+  openResource(resource)
 }
 </script>
 

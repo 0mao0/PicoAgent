@@ -9,14 +9,8 @@
           <SmartTree
             ref="smartTreeRef"
             :tree-data="treeData"
-            :show-search="true"
-            search-placeholder="搜索文档..."
-            :show-add-root-folder="false"
-            :show-status="false"
-            :draggable="false"
-            :allow-add-file="false"
+            v-bind="treeProps"
             :loading="loading"
-            empty-text="暂无文档"
             @select="onTreeSelect"
           >
             <template #icon="{ node }">
@@ -36,66 +30,36 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { FolderOutlined, FileTextOutlined } from '@ant-design/icons-vue'
-import { SmartTree } from '@angineer/docs-ui'
+import { SmartTree, useKnowledgeTree, createResourceNodeFromKnowledge } from '@angineer/docs-ui'
 import SOPSidebar from './sidebar/SOPSidebar.vue'
 import ProjectSidebar from './sidebar/ProjectSidebar.vue'
 import { useThemeStore } from '@/stores'
 import { knowledgeApi } from '@/api/knowledge'
 import type { SmartTreeNode } from '@angineer/docs-ui'
+import { useResourceOpen } from '@/composables/useResourceOpen'
 
 const themeStore = useThemeStore()
 const activeTab = ref('knowledge')
 
 const smartTreeRef = ref<InstanceType<typeof SmartTree> | null>(null)
-const treeData = ref<SmartTreeNode[]>([])
+const { treeData, buildTree } = useKnowledgeTree()
 const loading = ref(false)
-
-interface TreeNode {
-  key: string
-  title: string
-  isFolder: boolean
-  visible: boolean
-  status: string
-  parentId?: string
-  filePath?: string
-  children?: TreeNode[]
-}
-
-const buildTree = (nodes: any[]): TreeNode[] => {
-  const nodeMap = new Map<string, TreeNode>()
-  const roots: TreeNode[] = []
-
-  nodes.forEach(n => {
-    nodeMap.set(n.id, {
-      key: n.id,
-      title: n.title,
-      isFolder: n.type === 'folder',
-      visible: n.visible,
-      status: n.status || 'pending',
-      parentId: n.parent_id,
-      filePath: n.file_path
-    })
-  })
-
-  nodes.forEach(n => {
-    const node = nodeMap.get(n.id)!
-    if (n.parent_id && nodeMap.has(n.parent_id)) {
-      const parent = nodeMap.get(n.parent_id)!
-      if (!parent.children) parent.children = []
-      parent.children.push(node)
-    } else {
-      roots.push(node)
-    }
-  })
-
-  return roots
+const { openResource } = useResourceOpen()
+const treeProps = {
+  showSearch: true,
+  searchPlaceholder: '搜索文档...',
+  showAddRootFolder: false,
+  showStatus: false,
+  draggable: false,
+  allowAddFile: false,
+  emptyText: '暂无文档'
 }
 
 const loadNodes = async () => {
   loading.value = true
   try {
     const response = await knowledgeApi.getNodes('default', true) as unknown as any[]
-    treeData.value = buildTree(response) as unknown as SmartTreeNode[]
+    treeData.value = buildTree(response)
   } catch (error) {
     console.error('加载知识库节点失败:', error)
   } finally {
@@ -112,8 +76,9 @@ const onTreeSelect = async (_keys: string[], nodes: SmartTreeNode[]) => {
   }
 }
 
-const onSelectDoc = (node: any) => {
-  console.log('Select doc:', node)
+const onSelectDoc = (node: SmartTreeNode) => {
+  const resource = createResourceNodeFromKnowledge(node, 'default')
+  openResource(resource)
 }
 
 onMounted(() => {

@@ -25,14 +25,19 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { PlusOutlined, FolderOutlined } from '@ant-design/icons-vue'
+import { createResourceNodeFromProject, type ProjectItem } from '@angineer/docs-ui'
+import { useResourceOpen } from '@/composables/useResourceOpen'
 
-const projectList = ref([
+const { openResource } = useResourceOpen()
+
+const projectList = ref<ProjectItem[]>([
   { id: 'proj-1', name: '某港总体规划', path: 'D:/Projects/harbor-plan' },
   { id: 'proj-2', name: '航道扩建工程', path: 'D:/Projects/channel-expansion' }
 ])
 
-const openProject = (project: any) => {
-  console.log('Open project:', project)
+const openProject = (project: ProjectItem) => {
+  const resource = createResourceNodeFromProject(project)
+  openResource(resource)
 }
 </script>
 

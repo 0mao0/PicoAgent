@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import type { OpenResourcePayload, WorkbenchTabType } from '@angineer/docs-ui'
 
 interface Tab {
   key: string
-  type: 'document' | 'sop' | 'gis' | 'code'
+  type: WorkbenchTabType
   title: string
-  props: Record<string, any>
+  props: Record<string, unknown>
 }
 
 export const useWorkbenchStore = defineStore('workbench', () => {
@@ -20,6 +21,15 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       tabs.value.push(tab)
     }
     activeTab.value = tab.key
+  }
+
+  const openResource = (payload: OpenResourcePayload) => {
+    openTab({
+      key: payload.key,
+      type: payload.type,
+      title: payload.title,
+      props: payload.props
+    })
   }
 
   const closeTab = (key: string) => {
@@ -41,6 +51,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     activeTab,
     currentTab,
     openTab,
+    openResource,
     closeTab,
     setActiveTab
   }

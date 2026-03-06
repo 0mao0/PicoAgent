@@ -16,55 +16,40 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { knowledgeApi } from '@/api/knowledge'
+
+const props = defineProps<{
+  libraryId?: string
+  docId?: string
+  title?: string
+}>()
 
 const route = useRoute()
 const loading = ref(true)
-const document = ref<any>(null)
+const document = ref<{ id: string; title: string; content: string } | null>(null)
 
 const renderedContent = computed(() => {
   return document.value?.content || ''
 })
 
 onMounted(async () => {
-  const docId = route.params.id as string
-  
+  const docId = (props.docId || route.params.id || '') as string
+  const libraryId = props.libraryId || 'default'
+  if (!docId) {
+    loading.value = false
+    document.value = null
+    return
+  }
   loading.value = true
   try {
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
+    const result = await knowledgeApi.getDocument(libraryId, docId) as { content?: string; title?: string }
     document.value = {
       id: docId,
-      title: '海港总体设计规范 - 第6章 进港航道、锚地',
-      content: `
-        <h1>6 进港航道、锚地及导助航设施</h1>
-        <h2>6.1 一般规定</h2>
-        <p>6.1.1 进港航道、锚地及导助航设施的设计应根据港口总体规划、到港船型、自然条件等因素综合确定。</p>
-        <p>6.1.2 航道设计应满足船舶安全航行的要求，并应考虑航道维护和管理的需要。</p>
-        <h2>6.2 航道建设规模及航行标准</h2>
-        <p>6.2.1 航道建设规模应根据港口吞吐量预测、到港船型组合、船舶交通量等因素确定。</p>
-        <h2>6.4 航道尺度</h2>
-        <p>6.4.5 航道通航水深和设计水深应根据设计船型吃水、船舶航行下沉量、波浪产生的垂直运动、航道底质、水体密度、回淤强度和维护周期等因素确定。</p>
-        <div class="formula">
-          <p><strong>公式 6.4.5-1:</strong></p>
-          <p>D₀ = T + Z₀ + Z₁ + Z₂ + Z₃</p>
-        </div>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>船舶吨级 DWT (10⁴t)</th>
-              <th>4 kn</th>
-              <th>6 kn</th>
-              <th>8 kn</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>0</td><td>0.05</td><td>0.15</td><td>0.30</td></tr>
-            <tr><td>2</td><td>0.08</td><td>0.25</td><td>0.45</td></tr>
-            <tr><td>4</td><td>0.12</td><td>0.35</td><td>0.58</td></tr>
-          </tbody>
-        </table>
-      `
+      title: props.title || result?.title || `文档 ${docId}`,
+      content: result?.content || ''
     }
+  } catch {
+    document.value = null
   } finally {
     loading.value = false
   }

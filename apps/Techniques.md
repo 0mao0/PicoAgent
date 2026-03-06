@@ -6,10 +6,171 @@
 
 ## 目录
 
+- [前端架构图（重绘）](#前端架构图重绘)
+- [统一资源架构（已落地）](#统一资源架构已落地)
+- [统一资源执行清单（按文件级）](#统一资源执行清单按文件级)
 - [AIChat 对话系统](#aichat-对话系统)
 - [SmartTree 知识树系统](#smarttree-知识树系统)
 - [API 端点速查](#api-端点速查)
 - [数据模型](#数据模型)
+
+---
+
+## 前端架构图（重绘）
+
+### 分层架构（当前实现）
+
+```mermaid
+flowchart TB
+  subgraph Apps["前端应用层"]
+    Web["apps/web-console\n工作台壳：三栏 + Tab 工作区"]
+    Admin["apps/admin-console\n管理壳：路由页 + 三栏管理页"]
+  end
+
+  subgraph SharedUI["共享 UI / 交互层"]
+    DocsUI["packages/docs-ui\nSmartTree / AIChat / useKnowledgeTree"]
+    UIKit["packages/ui-kit\nSplitPanes / Panel / Theme"]
+  end
+
+  subgraph ResourceCore["资源协议层"]
+    Types["types/resource.ts\nResourceNode / OpenResourcePayload"]
+    Adapter["useResourceAdapter.ts\nproject|knowledge|sop -> payload"]
+    OpenFlow["useResourceOpen + workbenchStore.openResource"]
+  end
+
+  subgraph State["状态层"]
+    WB["workbench store\nTab 生命周期与激活态"]
+    Chat["chat store\n会话状态"]
+  end
+
+  subgraph API["服务访问层"]
+    KApi["knowledgeApi"]
+    CApi["/api/chat"]
+  end
+
+  Web --> DocsUI
+  Web --> UIKit
+  Admin --> DocsUI
+  Admin --> UIKit
+
+  DocsUI --> Types
+  DocsUI --> Adapter
+  Adapter --> OpenFlow
+  OpenFlow --> WB
+
+  DocsUI --> Chat
+  Web --> KApi
+  Admin --> KApi
+  DocsUI --> CApi
+```
+
+### 资源打开链路（前端统一）
+
+```mermaid
+sequenceDiagram
+  participant User as 用户点击节点
+  participant Side as 侧栏(项目/知识/SOP)
+  participant Adapt as createResourceNode + createOpenResourcePayload
+  participant Open as useResourceOpen
+  participant Store as workbenchStore
+  participant View as Workbench视图映射
+
+  User->>Side: 点击资源
+  Side->>Adapt: 资源实体 -> ResourceNode
+  Adapt->>Open: 输出 OpenResourcePayload
+  Open->>Store: openResource(payload)
+  Store->>View: 激活/创建对应Tab
+  View-->>User: 渲染 DocumentView / SOPView / ProjectView
+```
+
+### 应用壳体职责
+
+```text
+web-console（工作台型）
+└─ App.vue
+   ├─ LeftPanel（项目/知识/SOP 入口）
+   ├─ Workbench（统一资源标签页渲染）
+   └─ AIChat（共享对话组件）
+
+admin-console（管理路由型）
+└─ App.vue
+   └─ router-view
+      └─ /knowledge -> KnowledgeManage
+         ├─ 左：SmartTree（管理态）
+         ├─ 中：文档解析区
+         └─ 右：AIChat（共享对话组件）
+```
+
+---
+
+## 统一资源架构（已落地）
+
+### 组件-文件映射图（新增）
+
+```mermaid
+flowchart LR
+  subgraph Web["apps/web-console"]
+    LP["LeftPanel.vue"]
+    PS["sidebar/ProjectSidebar.vue"]
+    SS["sidebar/SOPSidebar.vue"]
+    RO["composables/useResourceOpen.ts"]
+    WB["stores/workbench.ts"]
+    WV["layouts/Workbench.vue"]
+    DV["views/DocumentView.vue"]
+    SV["views/SOPView.vue"]
+    PV["views/ProjectView.vue"]
+  end
+
+  subgraph Shared["packages/docs-ui"]
+    RT["types/resource.ts"]
+    RA["composables/useResourceAdapter.ts"]
+    ST["components/common/SmartTree.vue"]
+  end
+
+  subgraph Admin["apps/admin-console"]
+    KM["views/KnowledgeManage.vue"]
+  end
+
+  LP --> RA
+  PS --> RA
+  SS --> RA
+  KM --> RA
+
+  RA --> RT
+  LP --> RO
+  PS --> RO
+  SS --> RO
+  RO --> WB
+  WB --> WV
+  WV --> DV
+  WV --> SV
+  WV --> PV
+  LP --> ST
+  KM --> ST
+```
+
+### 当前架构原则
+
+- 共享能力层（组件、协议、适配器），不强制共享页面骨架
+- 保持 web-console 工作台模式，保持 admin-console 路由页面模式
+- 资源打开统一走 `ResourceNode -> OpenResourcePayload -> workbenchStore.openResource`
+
+## 统一资源执行清单（按文件级）
+
+- `packages/docs-ui/src/types/resource.ts`：定义 `ResourceNode`、`OpenResourcePayload`、`WorkbenchTabType`
+- `packages/docs-ui/src/composables/useResourceAdapter.ts`：实现 project/knowledge/sop 到 payload 的统一转换
+- `packages/docs-ui/src/types/index.ts`：导出 resource 类型
+- `packages/docs-ui/src/composables/index.ts`：导出 resource adapter 能力
+- `apps/web-console/src/stores/workbench.ts`：提供 `openResource(payload)` 并统一 Tab 生命周期
+- `apps/web-console/src/composables/useResourceOpen.ts`：封装资源打开入口
+- `apps/web-console/src/layouts/LeftPanel.vue`：知识节点点击接入统一资源链路
+- `apps/web-console/src/layouts/sidebar/ProjectSidebar.vue`：项目入口接入统一资源链路
+- `apps/web-console/src/layouts/sidebar/SOPSidebar.vue`：SOP 入口接入统一资源链路
+- `apps/web-console/src/layouts/Workbench.vue`：按 `WorkbenchTabType` 统一视图映射
+- `apps/web-console/src/views/ProjectView.vue`：project Tab 视图
+- `apps/web-console/src/views/DocumentView.vue`：document Tab 视图（props/route 双入口）
+- `apps/web-console/src/views/SOPView.vue`：sop Tab 视图（props/route 双入口）
+- `apps/admin-console/src/views/KnowledgeManage.vue`：后台复用 adapter 并支持打开前台文档页
 
 ---
 
