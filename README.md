@@ -98,23 +98,18 @@ pip install -e services/angineer-core/src -e services/sop-core/src -e services/d
 ### 3.3 启动服务
 
 ```bash
-# 一键启动（推荐）
 pnpm dev
-
-# 或分别启动
-pnpm dev:frontend   # 前台: http://localhost:3005
-pnpm dev:admin      # 后台: http://localhost:3002
-pnpm dev:backend    # 后端: http://localhost:8001
+pnpm dev:frontend
+pnpm dev:admin
+pnpm dev:backend
 ```
 
 ### 3.4 运行测试
 
 ```bash
-# 运行所有测试
-python -m pytest tests/ -v
-
-# 运行特定测试
-python -m pytest tests/unit/test_unit_dispatcher.py -v
+pnpm harness
+pnpm harness:workflow
+pnpm harness:tooling
 ```
 
 ---
@@ -130,8 +125,6 @@ python -m pytest tests/unit/test_unit_dispatcher.py -v
 ---
 
 ## 5. 文档
-
-详细技术文档请查看 [CLAUDE.md](./CLAUDE.md)
 
 前端架构图、可开工改造清单请查看 [apps/Techniques.md](./apps/Techniques.md)
 

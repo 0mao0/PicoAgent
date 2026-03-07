@@ -1,71 +1,74 @@
 <template>
   <div class="doc-preview" :class="{ 'dark-mode': isDark }">
-    <div class="doc-actions-bar">
-      <a-space>
-        <a-button
-          v-if="node.status === 'pending' || node.status === 'failed'"
-          type="primary"
-          @click="$emit('parse', node)"
-        >
-          <FileSearchOutlined /> 开始解析
-        </a-button>
-        <a-select
-          :value="strategyValue"
-          style="width: 180px"
-          @change="onStrategyChange"
-        >
-          <a-select-option value="A_structured">A 自研结构化</a-select-option>
-          <a-select-option value="B_mineru_rag">B MinerU-RAG</a-select-option>
-          <a-select-option value="C_pageindex">C PageIndex</a-select-option>
-        </a-select>
-        <a-button
-          v-if="node.status === 'completed'"
-          @click="editable = !editable"
-        >
-          {{ editable ? '只读' : '编辑 Markdown' }}
-        </a-button>
-        <a-button
-          v-if="node.status === 'completed' && editable"
-          type="primary"
-          @click="saveMarkdown"
-        >
-          保存
-        </a-button>
-        <a-button
-          v-if="node.status === 'completed'"
-          @click="emit('rebuild-structured')"
-        >
-          重建结构化索引
-        </a-button>
-        <a-switch
-          :checked="node.visible"
-          :checked-children="'已共享'"
-          :un-checked-children="'本地'"
-          @change="$emit('toggle-visible', node)"
-        />
-      </a-space>
-      <div v-if="node.status === 'processing'" class="processing-row">
-        <a-progress
-          :percent="progressPercent"
-          :status="node.parseError ? 'exception' : 'active'"
-          size="small"
-          class="processing-progress"
-        />
-        <span class="progress-text">{{ stageText }}</span>
-      </div>
-      <div v-if="node.status === 'completed'" class="structured-stats">
-        <a-tag color="blue">总条目 {{ structuredTotal }}</a-tag>
-        <a-tag color="green">标题 {{ strategyTypeCount('heading') }}</a-tag>
-        <a-tag color="purple">条款 {{ strategyTypeCount('clause') }}</a-tag>
-        <a-tag color="gold">表格 {{ strategyTypeCount('table') }}</a-tag>
-        <a-tag color="cyan">图片 {{ strategyTypeCount('image') }}</a-tag>
+    <div v-if="!isCompleted" class="doc-actions-bar">
+      <div class="actions-main-row">
+        <div class="actions-left">
+          <a-button
+            type="primary"
+            :loading="node.status === 'processing'"
+            @click="$emit('parse', node)"
+            class="parse-btn"
+          >
+            <FileSearchOutlined />
+            {{ parseButtonText }}
+          </a-button>
+        </div>
+        <div class="actions-center">
+          <div v-if="node.status === 'processing'" class="processing-row">
+            <a-progress
+              :percent="progressPercent"
+              :status="node.parseError ? 'exception' : 'active'"
+              size="small"
+              class="processing-progress"
+            />
+            <span class="progress-text">{{ stageText }}</span>
+          </div>
+          <a-button
+            v-else-if="node.status === 'completed'"
+            type="primary"
+            :loading="ingestStatus === 'processing'"
+            :disabled="!canIngest"
+            @click="emit('rebuild-structured')"
+            class="ingest-btn"
+          >
+            格式化入库
+          </a-button>
+        </div>
+        <div class="actions-right">
+          <a-switch
+            :checked="switchChecked"
+            :checked-children="'已分享'"
+            :un-checked-children="'本地'"
+            @change="onVisibleChange"
+            class="visible-switch"
+          />
+        </div>
       </div>
     </div>
 
     <div class="preview-content">
       <div v-if="node.status === 'completed'" class="split-preview">
         <div class="split-pane split-pane-left">
-          <div class="pane-title">B1 原文</div>
+          <div class="pane-title pane-title-with-actions">
+            <span class="pane-title-text">B1 原文</span>
+            <div class="pane-actions-left">
+              <a-button
+                type="primary"
+                @click="$emit('parse', node)"
+                class="parse-btn"
+              >
+                <FileSearchOutlined />
+                {{ parseButtonText }}
+              </a-button>
+              <a-switch
+                :checked="switchChecked"
+                :checked-children="'已分享'"
+                :un-checked-children="'本地'"
+                @change="onVisibleChange"
+                class="visible-switch"
+              />
+            </div>
+          </div>
           <div class="file-preview">
             <iframe
               v-if="isPdf"
@@ -95,7 +98,59 @@
           </div>
         </div>
         <div class="split-pane split-pane-right">
-          <div class="pane-title">B2 Markdown</div>
+          <div class="pane-title pane-title-with-actions b2-pane-title">
+            <span class="pane-title-text">B2 Markdown</span>
+            <div class="pane-actions-right">
+              <a-button @click="editable = !editable">
+                {{ editable ? '只读' : '编辑 Markdown' }}
+              </a-button>
+              <a-button
+                v-if="editable"
+                type="primary"
+                :disabled="!isContentDirty"
+                @click="saveMarkdown"
+              >
+                保存
+              </a-button>
+              <a-button
+                type="primary"
+                :loading="ingestStatus === 'processing'"
+                :disabled="!canIngest"
+                @click="emit('rebuild-structured')"
+                class="ingest-btn"
+              >
+                格式化入库
+              </a-button>
+            </div>
+          </div>
+          <div class="b2-meta-row">
+            <a-select
+              v-if="structuredTotal > 0"
+              :value="strategyValue"
+              style="width: 180px"
+              @change="onStrategyChange"
+            >
+              <a-select-option value="A_structured">查看 A 结果</a-select-option>
+              <a-select-option value="B_mineru_rag">查看 B 结果</a-select-option>
+              <a-select-option value="C_pageindex">查看 C 结果</a-select-option>
+            </a-select>
+            <div v-if="ingestStatus !== 'idle'" class="ingest-row">
+              <a-progress
+                :percent="ingestProgressPercent"
+                :status="ingestProgressStatus"
+                size="small"
+                class="processing-progress"
+              />
+              <span class="progress-text">{{ ingestStageText }}</span>
+            </div>
+            <div class="structured-stats">
+              <a-tag color="blue">总条目 {{ structuredTotal }}</a-tag>
+              <a-tag color="green">标题 {{ strategyTypeCount('heading') }}</a-tag>
+              <a-tag color="purple">条款 {{ strategyTypeCount('clause') }}</a-tag>
+              <a-tag color="gold">表格 {{ strategyTypeCount('table') }}</a-tag>
+              <a-tag color="cyan">图片 {{ strategyTypeCount('image') }}</a-tag>
+            </div>
+          </div>
           <a-textarea
             v-model:value="editableContent"
             :readonly="!editable"
@@ -151,6 +206,9 @@ interface Props {
   node: TreeNode
   content: string
   structuredStats?: Record<string, any>
+  ingestStatus?: 'idle' | 'processing' | 'completed' | 'failed'
+  ingestProgress?: number
+  ingestStage?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {})
@@ -167,6 +225,9 @@ const emit = defineEmits<{
 /** 获取文件路径 */
 const filePath = computed(() => props.node.filePath || props.node.file_path || '')
 const progressPercent = computed(() => Number(props.node.parseProgress || 0))
+const isCompleted = computed(() => props.node.status === 'completed')
+const ingestStatus = computed(() => props.ingestStatus || 'idle')
+const ingestProgressPercent = computed(() => Number(props.ingestProgress || 0))
 const stageText = computed(() => {
   if (props.node.parseError) return `解析失败：${props.node.parseError}`
   const stage = props.node.parseStage || 'processing'
@@ -181,8 +242,27 @@ const stageText = computed(() => {
   }
   return stageMap[stage] || stage
 })
+const ingestProgressStatus = computed(() => {
+  if (ingestStatus.value === 'failed') return 'exception'
+  if (ingestStatus.value === 'completed') return 'success'
+  return 'active'
+})
+const ingestStageText = computed(() => {
+  if (ingestStatus.value === 'failed') {
+    return props.ingestStage || '格式化入库失败'
+  }
+  if (ingestStatus.value === 'completed') {
+    return props.ingestStage || '格式化入库完成'
+  }
+  return props.ingestStage || '正在格式化入库'
+})
 const strategyValue = computed(() => props.node.strategy || 'A_structured')
 const structuredTotal = computed(() => Number(props.structuredStats?.total || 0))
+const parseButtonText = computed(() => {
+  if (props.node.status === 'completed') return '重新解析'
+  if (props.node.status === 'processing') return '解析中...'
+  return '开始解析'
+})
 const strategyTypeCount = (type: string) => {
   const strategy = strategyValue.value
   return Number(props.structuredStats?.strategies?.[strategy]?.[type] || 0)
@@ -235,6 +315,9 @@ const officePreviewUrl = computed(() => {
 const textContent = ref('')
 const editable = ref(false)
 const editableContent = ref('')
+const switchChecked = ref(Boolean(props.node.visible))
+const canIngest = computed(() => !editable.value || !isContentDirty.value)
+const isContentDirty = computed(() => editableContent.value !== (props.content || ''))
 
 /** 加载文本文件内容 */
 const loadTextContent = async () => {
@@ -253,6 +336,11 @@ const saveMarkdown = () => {
 
 const onStrategyChange = (value: 'A_structured' | 'B_mineru_rag' | 'C_pageindex') => {
   emit('change-strategy', value)
+}
+
+const onVisibleChange = (checked: boolean) => {
+  switchChecked.value = checked
+  emit('toggle-visible', { ...props.node, visible: checked })
 }
 
 /** 下载文件 */
@@ -274,6 +362,14 @@ watch(filePath, () => {
 watch(() => props.content, (value) => {
   editableContent.value = value || ''
 }, { immediate: true })
+
+watch(() => props.node.key, () => {
+  editable.value = false
+})
+
+watch(() => props.node.visible, (value) => {
+  switchChecked.value = Boolean(value)
+}, { immediate: true })
 </script>
 
 <style lang="less" scoped>
@@ -287,6 +383,46 @@ watch(() => props.content, (value) => {
     border-bottom: 1px solid #f0f0f0;
     background: #f5f7fa;
     flex-shrink: 0;
+  }
+
+  .actions-main-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 36px;
+  }
+
+  .actions-left,
+  .actions-center,
+  .actions-right {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .actions-left {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .actions-center {
+    flex: 1;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .actions-right {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+  }
+
+  .actions-sub-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
   }
 
   .preview-content {
@@ -313,6 +449,43 @@ watch(() => props.content, (value) => {
       .pane-title {
         font-size: 12px;
         color: #8c8c8c;
+        padding: 8px 12px;
+        border-bottom: 1px solid #f0f0f0;
+      }
+
+      .pane-title-with-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-height: 44px;
+      }
+
+      .pane-title-text {
+        flex: 0 0 auto;
+      }
+
+      .pane-actions-left,
+      .pane-actions-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .pane-actions-right {
+        justify-content: flex-end;
+      }
+
+      .b2-pane-title {
+        border-bottom: 0;
+      }
+
+      .b2-meta-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
         padding: 8px 12px;
         border-bottom: 1px solid #f0f0f0;
       }
@@ -384,11 +557,20 @@ watch(() => props.content, (value) => {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-top: 6px;
+    min-width: 0;
+    width: min(460px, 100%);
+    flex-wrap: nowrap;
+  }
+
+  .ingest-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
   }
 
   .processing-progress {
-    width: 240px;
+    flex: 0 0 250px;
     margin: 0;
   }
 
@@ -396,10 +578,29 @@ watch(() => props.content, (value) => {
     color: #8c8c8c;
     font-size: 12px;
     line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .parse-btn,
+  .ingest-btn {
+    height: 32px;
+    border-radius: 8px;
+    font-weight: 500;
+  }
+
+  .visible-switch {
+    min-width: 72px;
   }
 
   .structured-stats {
-    margin-top: 8px;
+    margin-top: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   &.dark-mode {

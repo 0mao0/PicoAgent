@@ -83,6 +83,9 @@
               :node="selectedNode"
               :content="docContent"
               :structured-stats="structuredStats"
+              :ingest-status="ingestStatus"
+              :ingest-progress="ingestProgress"
+              :ingest-stage="ingestStage"
               @parse="parseDocument"
               @view="viewDocument"
               @toggle-visible="toggleVisible"
@@ -200,7 +203,11 @@ const allowedFileTypes = ['.pdf', '.doc', '.docx', '.md']
 const leftWidth = ref(350)
 const centerWidth = ref(700)
 const parsePollTimer = ref<number | null>(null)
+const ingestProgressTimer = ref<number | null>(null)
 const structuredStats = ref<Record<string, any>>({})
+const ingestStatus = ref<'idle' | 'processing' | 'completed' | 'failed'>('idle')
+const ingestProgress = ref(0)
+const ingestStage = ref('')
 
 // 弹窗状态
 const folderModalVisible = ref(false)
@@ -374,6 +381,31 @@ const loadStructuredStats = async (docId: string) => {
   }
 }
 
+const resetIngestState = () => {
+  ingestStatus.value = 'idle'
+  ingestProgress.value = 0
+  ingestStage.value = ''
+  if (ingestProgressTimer.value) {
+    window.clearInterval(ingestProgressTimer.value)
+    ingestProgressTimer.value = null
+  }
+}
+
+const startIngestProgress = () => {
+  resetIngestState()
+  ingestStatus.value = 'processing'
+  ingestProgress.value = 8
+  ingestStage.value = '正在提交入库任务'
+  ingestProgressTimer.value = window.setInterval(() => {
+    if (ingestProgress.value >= 90) return
+    const step = ingestProgress.value < 60 ? 8 : 3
+    ingestProgress.value = Math.min(90, ingestProgress.value + step)
+    if (ingestProgress.value < 40) ingestStage.value = '正在格式化结构化内容'
+    else if (ingestProgress.value < 75) ingestStage.value = '正在写入结构化索引'
+    else ingestStage.value = '正在校验入库结果'
+  }, 600)
+}
+
 // 显示新建文件夹弹窗
 const showCreateFolderModal = () => {
   folderForm.value = { name: '', parentId: undefined, isNew: true, nodeId: '' }
@@ -481,6 +513,7 @@ const showDocDetail = (node: SmartTreeNode) => {
 // 解析文档
 const parseDocument = async (node: SmartTreeNode) => {
   try {
+    resetIngestState()
     const result = await knowledgeApi.parseDocumentAsync('default', node.key, node.filePath) as any
     const taskId = result?.task_id
     message.success('开始解析文档')
@@ -489,7 +522,8 @@ const parseDocument = async (node: SmartTreeNode) => {
       startParsePolling(taskId, node.key)
     }
   } catch (error) {
-    message.error('解析失败')
+    const detail = (error as any)?.response?.data?.detail || (error as any)?.message
+    message.error(detail ? `解析失败: ${detail}` : '解析失败')
   }
 }
 
@@ -509,9 +543,7 @@ const changeDocumentStrategy = async (strategy: 'A_structured' | 'B_mineru_rag' 
   try {
     await knowledgeApi.setDocStrategy(selectedNode.value.key, strategy)
     selectedNode.value.strategy = strategy
-    await knowledgeApi.buildStructuredIndex('default', selectedNode.value.key, strategy)
-    message.success('策略已更新')
-    await loadNodes(selectedNode.value.key)
+    message.success('查看策略已切换')
     await loadStructuredStats(selectedNode.value.key)
   } catch (error) {
     message.error('策略更新失败')
@@ -521,12 +553,28 @@ const changeDocumentStrategy = async (strategy: 'A_structured' | 'B_mineru_rag' 
 const rebuildStructuredIndex = async () => {
   if (!selectedNode.value || selectedNode.value.isFolder) return
   try {
+    startIngestProgress()
     const strategy = (selectedNode.value.strategy || 'A_structured') as 'A_structured' | 'B_mineru_rag' | 'C_pageindex'
     await knowledgeApi.buildStructuredIndex('default', selectedNode.value.key, strategy)
+    if (ingestProgressTimer.value) {
+      window.clearInterval(ingestProgressTimer.value)
+      ingestProgressTimer.value = null
+    }
+    ingestStatus.value = 'completed'
+    ingestProgress.value = 100
+    ingestStage.value = '格式化入库完成'
     await loadStructuredStats(selectedNode.value.key)
-    message.success('结构化索引已重建')
+    message.success('格式化入库完成')
   } catch (error) {
-    message.error('重建结构化索引失败')
+    if (ingestProgressTimer.value) {
+      window.clearInterval(ingestProgressTimer.value)
+      ingestProgressTimer.value = null
+    }
+    ingestStatus.value = 'failed'
+    ingestProgress.value = 100
+    const detail = (error as any)?.response?.data?.detail || (error as any)?.message
+    ingestStage.value = detail || '格式化入库失败'
+    message.error('格式化入库失败')
   }
 }
 
@@ -583,9 +631,10 @@ const viewDocument = (node: SmartTreeNode) => {
 
 // 切换可见性
 const toggleVisible = async (node: SmartTreeNode) => {
+  const targetVisible = typeof node.visible === 'boolean' ? node.visible : !node.visible
   try {
     await knowledgeApi.updateNode(node.key, {
-      visible: !node.visible
+      visible: targetVisible
     })
     message.success('更新成功')
     await loadNodes()
@@ -856,6 +905,7 @@ onMounted(() => {
 })
 
 watch(() => selectedNode.value?.key, () => {
+  resetIngestState()
   if (!selectedNode.value || selectedNode.value.isFolder) {
     stopParsePolling()
     return
@@ -867,6 +917,7 @@ watch(() => selectedNode.value?.key, () => {
 
 onBeforeUnmount(() => {
   stopParsePolling()
+  resetIngestState()
 })
 </script>
 

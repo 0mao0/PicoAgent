@@ -6,6 +6,7 @@
 
 ## 目录
 
+- [前端常用命令（自动同步）](#前端常用命令自动同步)
 - [前端架构图（重绘）](#前端架构图重绘)
 - [文档解析与对比查改改造清单（可直接开工）](#文档解析与对比查改改造清单可直接开工)
 - [统一资源架构（已落地）](#统一资源架构已落地)
@@ -14,6 +15,23 @@
 - [SmartTree 知识树系统](#smarttree-知识树系统)
 - [API 端点速查](#api-端点速查)
 - [数据模型](#数据模型)
+
+---
+
+## 前端常用命令（自动同步）
+
+<!-- AUTO_SYNC:APPS_TECH_COMMANDS:START -->
+```bash
+pnpm install
+pnpm dev:frontend
+pnpm dev:admin
+pnpm build:frontend
+pnpm build:admin
+pnpm lint
+pnpm docs:sync
+pnpm docs:check
+```
+<!-- AUTO_SYNC:APPS_TECH_COMMANDS:END -->
 
 ---
 

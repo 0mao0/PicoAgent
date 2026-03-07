@@ -4,6 +4,22 @@
 
 ---
 
+## 后端常用命令（自动同步）
+
+<!-- AUTO_SYNC:SERVICES_TECH_COMMANDS:START -->
+```bash
+pnpm install
+pnpm dev:backend
+pnpm harness
+pnpm harness:workflow
+pnpm harness:tooling
+pnpm docs:sync
+pnpm docs:check
+```
+<!-- AUTO_SYNC:SERVICES_TECH_COMMANDS:END -->
+
+---
+
 ## 后端架构图（文档解析改造版）
 
 ```mermaid
