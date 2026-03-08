@@ -22,15 +22,7 @@ dist/
 .idea/
 .trae/
 .DS_Store
-CLAUDE.md
+AGENTS.md
 
 # Knowledge and SOPs - Only allow specific files
-data/knowledge_base/*
-!data/knowledge_base/markdown/
-!data/knowledge_base/pics/
-!data/knowledge_base/source/
-
-data/sops/raw/*
-!data/sops/raw/index.json
-
-data/sops/json/*
+data/

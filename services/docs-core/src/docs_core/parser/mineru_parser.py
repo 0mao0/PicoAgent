@@ -15,11 +15,17 @@ class MinerUParser:
     """MinerU 文档解析器"""
 
     def __init__(self):
-        self.api_url = (os.getenv('MINERU_API_URL', 'https://mineru.net') or '').strip().rstrip('/')
+        self.api_url = (
+            os.getenv('MINERU_API_URL', '')
+            or os.getenv('MINERU_BASE_URL', '')
+            or os.getenv('MINERU_ENDPOINT', '')
+            or 'https://mineru.net/api/v4'
+        ).strip().rstrip('/')
         self.client_base_url = self._normalize_api_url(self.api_url)
         self.api_key = (
             os.getenv('MINERU_API_KEY', '')
             or os.getenv('MINERU_API_TOKEN', '')
+            or os.getenv('MINERU_TOKEN', '')
         )
         self._client = None
         self._direct_base_url_checked = False
@@ -87,24 +93,76 @@ class MinerUParser:
 
     def _extract_markdown_from_payload(self, payload: Any) -> Optional[str]:
         """从响应体中提取 Markdown 文本"""
+        def score_markdown_candidate(text: str) -> int:
+            candidate = (text or '').strip()
+            if not candidate:
+                return -100
+            lowered = candidate.lower()
+            score = 0
+            if '\n' in candidate:
+                score += 3
+            if len(candidate) >= 80:
+                score += 2
+            elif len(candidate) >= 24:
+                score += 1
+            if re.search(r'(^|\n)\s{0,3}(#{1,6}\s+|[-*+]\s+|\d+\.\s+)', candidate):
+                score += 3
+            if re.search(r'\|.+\|', candidate):
+                score += 2
+            if re.search(r'!\[[^\]]*\]\([^)]+\)', candidate):
+                score += 2
+            if re.search(r'`[^`]+`', candidate):
+                score += 1
+            if lowered in {'pipeline', 'success', 'ok', 'done', 'true', 'false'}:
+                score -= 8
+            if len(candidate) <= 12 and '\n' not in candidate:
+                score -= 4
+            return score
+
+        def pick_best(candidates: List[str]) -> Optional[str]:
+            best_text: Optional[str] = None
+            best_score = -1000
+            for item in candidates:
+                item_text = (item or '').strip()
+                if not item_text:
+                    continue
+                current_score = score_markdown_candidate(item_text)
+                if current_score > best_score:
+                    best_text = item_text
+                    best_score = current_score
+                elif current_score == best_score and best_text and len(item_text) > len(best_text):
+                    best_text = item_text
+            if best_text and best_score >= 2:
+                return best_text
+            return None
+
         if isinstance(payload, str):
             text = payload.strip()
-            return text if text else None
+            return text if score_markdown_candidate(text) >= 2 else None
         if isinstance(payload, list):
+            candidates: List[str] = []
             for item in payload:
                 markdown = self._extract_markdown_from_payload(item)
                 if markdown:
-                    return markdown
-            return None
+                    candidates.append(markdown)
+            return pick_best(candidates)
         if isinstance(payload, dict):
+            candidates: List[str] = []
             for key in ('markdown', 'md', 'md_content', 'content', 'text'):
                 value = payload.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value
+                if isinstance(value, str):
+                    item = value.strip()
+                    if item:
+                        candidates.append(item)
+                    continue
+                markdown = self._extract_markdown_from_payload(value)
+                if markdown:
+                    candidates.append(markdown)
             for value in payload.values():
                 markdown = self._extract_markdown_from_payload(value)
                 if markdown:
-                    return markdown
+                    candidates.append(markdown)
+            return pick_best(candidates)
         return None
 
     def _is_oom_message(self, text: str) -> bool:

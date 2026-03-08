@@ -1,20 +1,38 @@
 <template>
   <div class="doc-preview" :class="{ 'dark-mode': isDark }">
-    <div v-if="!isCompleted" class="doc-actions-bar">
-      <div class="actions-main-row">
-        <div class="actions-left">
-          <a-button
-            type="primary"
-            :loading="node.status === 'processing'"
-            @click="$emit('parse', node)"
-            class="parse-btn"
-          >
-            <FileSearchOutlined />
-            {{ parseButtonText }}
-          </a-button>
-        </div>
-        <div class="actions-center">
-          <div v-if="node.status === 'processing'" class="processing-row">
+    <div class="preview-content">
+      <div class="split-preview">
+        <div class="split-pane split-pane-left">
+          <div class="pane-title pane-title-with-actions">
+            <div class="pane-title-main">
+              <span class="pane-title-prefix">B1</span>
+              <span class="doc-name" :title="node.title">{{ node.title }}</span>
+              <a-tag v-if="node.status === 'failed'" color="error" class="parse-state-tag">
+                解析失败
+              </a-tag>
+              <a-tag v-else-if="node.status === 'processing'" color="processing" class="parse-state-tag">
+                解析中 {{ progressPercent }}%
+              </a-tag>
+            </div>
+            <div class="pane-actions-left">
+              <a-button
+                type="primary"
+                :loading="node.status === 'processing'"
+                @click="$emit('parse', node)"
+                class="parse-btn action-btn"
+              >
+                {{ parseButtonText }}
+              </a-button>
+              <a-switch
+                :checked="switchChecked"
+                :checked-children="'共享'"
+                :un-checked-children="'本地'"
+                @change="onVisibleChange"
+                class="visible-switch action-switch"
+              />
+            </div>
+          </div>
+          <div v-if="node.status === 'processing' || node.status === 'failed'" class="parse-progress-row">
             <a-progress
               :percent="progressPercent"
               :status="node.parseError ? 'exception' : 'active'"
@@ -23,56 +41,10 @@
             />
             <span class="progress-text">{{ stageText }}</span>
           </div>
-          <a-button
-            v-else-if="node.status === 'completed'"
-            type="primary"
-            :loading="ingestStatus === 'processing'"
-            :disabled="!canIngest"
-            @click="emit('rebuild-structured')"
-            class="ingest-btn"
-          >
-            格式化入库
-          </a-button>
-        </div>
-        <div class="actions-right">
-          <a-switch
-            :checked="switchChecked"
-            :checked-children="'已分享'"
-            :un-checked-children="'本地'"
-            @change="onVisibleChange"
-            class="visible-switch"
-          />
-        </div>
-      </div>
-    </div>
-
-    <div class="preview-content">
-      <div v-if="node.status === 'completed'" class="split-preview">
-        <div class="split-pane split-pane-left">
-          <div class="pane-title pane-title-with-actions">
-            <span class="pane-title-text">B1 原文</span>
-            <div class="pane-actions-left">
-              <a-button
-                type="primary"
-                @click="$emit('parse', node)"
-                class="parse-btn"
-              >
-                <FileSearchOutlined />
-                {{ parseButtonText }}
-              </a-button>
-              <a-switch
-                :checked="switchChecked"
-                :checked-children="'已分享'"
-                :un-checked-children="'本地'"
-                @change="onVisibleChange"
-                class="visible-switch"
-              />
-            </div>
-          </div>
           <div class="file-preview">
             <iframe
               v-if="isPdf"
-              :src="fileUrl"
+              :src="pdfViewerUrl"
               class="pdf-viewer"
               frameborder="0"
             />
@@ -97,103 +69,109 @@
             </a-empty>
           </div>
         </div>
+
         <div class="split-pane split-pane-right">
           <div class="pane-title pane-title-with-actions b2-pane-title">
-            <span class="pane-title-text">B2 Markdown</span>
+            <a-tabs v-model:activeKey="activeTab" size="small" class="b2-tabs">
+              <a-tab-pane key="preview" tab="解析结果" />
+              <a-tab-pane key="markdown" tab="Markdown" />
+            </a-tabs>
             <div class="pane-actions-right">
-              <a-button @click="editable = !editable">
-                {{ editable ? '只读' : '编辑 Markdown' }}
-              </a-button>
-              <a-button
-                v-if="editable"
-                type="primary"
-                :disabled="!isContentDirty"
-                @click="saveMarkdown"
+              <a-select
+                v-if="hasParsedContent"
+                :value="strategyValue"
+                style="width: 160px"
+                @change="onStrategyChange"
               >
-                保存
-              </a-button>
+                <a-select-option value="A_structured">A 结果</a-select-option>
+                <a-select-option value="B_mineru_rag">B 结果</a-select-option>
+                <a-select-option value="C_pageindex">C 结果</a-select-option>
+              </a-select>
               <a-button
                 type="primary"
                 :loading="ingestStatus === 'processing'"
                 :disabled="!canIngest"
-                @click="emit('rebuild-structured')"
-                class="ingest-btn"
+                @click="triggerIngest"
+                class="ingest-btn action-btn"
               >
-                格式化入库
+                {{ ingestButtonText }}
               </a-button>
-            </div>
-          </div>
-          <div class="b2-meta-row">
-            <a-select
-              v-if="structuredTotal > 0"
-              :value="strategyValue"
-              style="width: 180px"
-              @change="onStrategyChange"
-            >
-              <a-select-option value="A_structured">查看 A 结果</a-select-option>
-              <a-select-option value="B_mineru_rag">查看 B 结果</a-select-option>
-              <a-select-option value="C_pageindex">查看 C 结果</a-select-option>
-            </a-select>
-            <div v-if="ingestStatus !== 'idle'" class="ingest-row">
-              <a-progress
-                :percent="ingestProgressPercent"
-                :status="ingestProgressStatus"
-                size="small"
-                class="processing-progress"
+              <a-button
+                v-if="showStatsAction"
+                :icon="h(PieChartOutlined)"
+                class="action-btn stats-btn"
+                @click="statsModalVisible = true"
               />
-              <span class="progress-text">{{ ingestStageText }}</span>
-            </div>
-            <div class="structured-stats">
-              <a-tag color="blue">总条目 {{ structuredTotal }}</a-tag>
-              <a-tag color="green">标题 {{ strategyTypeCount('heading') }}</a-tag>
-              <a-tag color="purple">条款 {{ strategyTypeCount('clause') }}</a-tag>
-              <a-tag color="gold">表格 {{ strategyTypeCount('table') }}</a-tag>
-              <a-tag color="cyan">图片 {{ strategyTypeCount('image') }}</a-tag>
             </div>
           </div>
-          <a-textarea
-            v-model:value="editableContent"
-            :readonly="!editable"
-            :auto-size="{ minRows: 18, maxRows: 32 }"
-            class="markdown-editor"
-          />
+
+          <div class="b2-content">
+            <div v-if="activeTab === 'preview'" class="markdown-preview" v-html="renderedMarkdown" />
+            <div v-else class="markdown-edit-wrap">
+              <a-textarea
+                v-model:value="editableContent"
+                class="markdown-editor"
+              />
+              <div class="markdown-edit-actions">
+                <a-button
+                  type="primary"
+                  :disabled="!isContentDirty"
+                  class="action-btn"
+                  @click="saveMarkdown"
+                >
+                  保存
+                </a-button>
+              </div>
+            </div>
+            <a-empty
+              v-if="!hasParsedContent && activeTab === 'preview'"
+              description="请先解析文档，解析完成后将显示结果"
+              class="b2-empty"
+            />
+          </div>
         </div>
       </div>
-      <div v-else-if="node.filePath || node.file_path" class="file-preview">
-        <iframe
-          v-if="isPdf"
-          :src="fileUrl"
-          class="pdf-viewer"
-          frameborder="0"
-        />
-        <div v-else-if="isOffice" class="office-preview">
-          <iframe
-            :src="officePreviewUrl"
-            class="office-viewer"
-            frameborder="0"
-          />
-        </div>
-        <img
-          v-else-if="isImage"
-          :src="fileUrl"
-          class="image-viewer"
-          alt="文档预览"
-        />
-        <pre v-else-if="isText" class="text-viewer">{{ textContent }}</pre>
-        <a-empty v-else description="暂不支持该格式预览，请下载后查看">
-          <template #extra>
-            <a-button type="primary" @click="downloadFile">下载文件</a-button>
-          </template>
-        </a-empty>
-      </div>
-      <a-empty v-else :description="node.status === 'processing' ? '正在解析中...' : '请先解析文档'" />
     </div>
+
+    <a-modal
+      v-model:open="ingestModalVisible"
+      :title="ingestStatus === 'processing' ? '格式化入库中' : '格式化入库结果'"
+      :footer="null"
+      :mask-closable="ingestStatus !== 'processing'"
+      :closable="ingestStatus !== 'processing'"
+    >
+      <div class="ingest-modal-content">
+        <a-progress
+          :percent="ingestProgressPercent"
+          :status="ingestProgressStatus"
+          size="default"
+        />
+        <div class="ingest-stage">{{ ingestStageText }}</div>
+        <div v-if="ingestStatus === 'completed'" class="ingest-result">
+          总条目 {{ structuredTotal }}
+        </div>
+      </div>
+    </a-modal>
+
+    <a-modal
+      v-model:open="statsModalVisible"
+      title="入库分类统计"
+      :footer="null"
+    >
+      <div class="stats-modal-content">
+        <div class="stats-total">总条目：{{ structuredTotal }}</div>
+        <div v-for="item in strategyStats" :key="item.key" class="stats-row">
+          <span>{{ item.label }}</span>
+          <a-tag color="blue">{{ item.value }}</a-tag>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { FileSearchOutlined } from '@ant-design/icons-vue'
+import { computed, h, ref, watch } from 'vue'
+import { PieChartOutlined } from '@ant-design/icons-vue'
 import type { TreeNode } from '@angineer/docs-ui'
 import type { SmartTreeNode } from '@angineer/docs-ui'
 import { useTheme } from '@angineer/ui-kit'
@@ -225,9 +203,11 @@ const emit = defineEmits<{
 /** 获取文件路径 */
 const filePath = computed(() => props.node.filePath || props.node.file_path || '')
 const progressPercent = computed(() => Number(props.node.parseProgress || 0))
-const isCompleted = computed(() => props.node.status === 'completed')
 const ingestStatus = computed(() => props.ingestStatus || 'idle')
 const ingestProgressPercent = computed(() => Number(props.ingestProgress || 0))
+const activeTab = ref<'preview' | 'markdown'>('preview')
+const ingestModalVisible = ref(false)
+const statsModalVisible = ref(false)
 const stageText = computed(() => {
   if (props.node.parseError) return `解析失败：${props.node.parseError}`
   const stage = props.node.parseStage || 'processing'
@@ -258,15 +238,25 @@ const ingestStageText = computed(() => {
 })
 const strategyValue = computed(() => props.node.strategy || 'A_structured')
 const structuredTotal = computed(() => Number(props.structuredStats?.total || 0))
+const hasParsedContent = computed(() => Boolean((props.content || '').trim()))
 const parseButtonText = computed(() => {
   if (props.node.status === 'completed') return '重新解析'
+  if (props.node.status === 'failed') return '重新解析'
   if (props.node.status === 'processing') return '解析中...'
   return '开始解析'
 })
+const ingestButtonText = computed(() => (structuredTotal.value > 0 ? '重新入库' : '格式化入库'))
 const strategyTypeCount = (type: string) => {
   const strategy = strategyValue.value
   return Number(props.structuredStats?.strategies?.[strategy]?.[type] || 0)
 }
+const strategyStats = computed(() => ([
+  { key: 'heading', label: '标题', value: strategyTypeCount('heading') },
+  { key: 'clause', label: '条款', value: strategyTypeCount('clause') },
+  { key: 'table', label: '表格', value: strategyTypeCount('table') },
+  { key: 'image', label: '图片', value: strategyTypeCount('image') }
+]))
+const showStatsAction = computed(() => structuredTotal.value > 0 && ingestStatus.value !== 'processing')
 
 /** 获取文件扩展名 */
 const fileExtension = computed(() => {
@@ -304,6 +294,13 @@ const fileUrl = computed(() => {
   if (filePath.value.startsWith('http')) return filePath.value
   return `/api/files?path=${encodeURIComponent(filePath.value)}`
 })
+const pdfViewerUrl = computed(() => {
+  if (!fileUrl.value) return ''
+  if (fileUrl.value.includes('#')) {
+    return `${fileUrl.value}&view=FitH`
+  }
+  return `${fileUrl.value}#view=FitH`
+})
 
 /** Office 文档预览 URL（使用微软在线预览服务） */
 const officePreviewUrl = computed(() => {
@@ -313,10 +310,9 @@ const officePreviewUrl = computed(() => {
 
 /** 文本文件内容 */
 const textContent = ref('')
-const editable = ref(false)
 const editableContent = ref('')
 const switchChecked = ref(Boolean(props.node.visible))
-const canIngest = computed(() => !editable.value || !isContentDirty.value)
+const canIngest = computed(() => !isContentDirty.value)
 const isContentDirty = computed(() => editableContent.value !== (props.content || ''))
 
 /** 加载文本文件内容 */
@@ -332,6 +328,11 @@ const loadTextContent = async () => {
 
 const saveMarkdown = () => {
   emit('save-content', editableContent.value)
+}
+
+const triggerIngest = () => {
+  ingestModalVisible.value = true
+  emit('rebuild-structured')
 }
 
 const onStrategyChange = (value: 'A_structured' | 'B_mineru_rag' | 'C_pageindex') => {
@@ -364,12 +365,35 @@ watch(() => props.content, (value) => {
 }, { immediate: true })
 
 watch(() => props.node.key, () => {
-  editable.value = false
+  activeTab.value = 'preview'
+  ingestModalVisible.value = false
+  statsModalVisible.value = false
 })
 
 watch(() => props.node.visible, (value) => {
   switchChecked.value = Boolean(value)
 }, { immediate: true })
+
+watch(ingestStatus, (value) => {
+  if (value === 'processing') {
+    ingestModalVisible.value = true
+  }
+})
+
+const renderMarkdown = (content: string): string => {
+  if (!content) return ''
+  return content
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+    .replace(/\n/g, '<br/>')
+}
+
+const renderedMarkdown = computed(() => renderMarkdown(editableContent.value || props.content || ''))
 </script>
 
 <style lang="less" scoped>
@@ -377,57 +401,11 @@ watch(() => props.node.visible, (value) => {
   display: flex;
   flex-direction: column;
   height: 100%;
-
-  .doc-actions-bar {
-    padding: 12px 16px;
-    border-bottom: 1px solid #f0f0f0;
-    background: #f5f7fa;
-    flex-shrink: 0;
-  }
-
-  .actions-main-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-height: 36px;
-  }
-
-  .actions-left,
-  .actions-center,
-  .actions-right {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-  }
-
-  .actions-left {
-    flex: 0 0 auto;
-    justify-content: flex-start;
-    gap: 8px;
-  }
-
-  .actions-center {
-    flex: 1;
-    justify-content: center;
-    min-width: 0;
-  }
-
-  .actions-right {
-    flex: 0 0 auto;
-    justify-content: flex-end;
-  }
-
-  .actions-sub-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
-  }
+  background: #fff;
 
   .preview-content {
     flex: 1;
-    overflow: auto;
+    overflow: hidden;
     padding: 0;
 
     .split-preview {
@@ -440,6 +418,7 @@ watch(() => props.node.visible, (value) => {
         min-width: 0;
         display: flex;
         flex-direction: column;
+        min-height: 0;
       }
 
       .split-pane-left {
@@ -447,22 +426,47 @@ watch(() => props.node.visible, (value) => {
       }
 
       .pane-title {
-        font-size: 12px;
-        color: #8c8c8c;
-        padding: 8px 12px;
+        font-size: 13px;
+        color: #595959;
+        padding: 10px 12px;
         border-bottom: 1px solid #f0f0f0;
+        background: #fff;
       }
 
       .pane-title-with-actions {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 8px;
-        min-height: 44px;
+        gap: 12px;
+        min-height: 48px;
       }
 
-      .pane-title-text {
-        flex: 0 0 auto;
+      .pane-title-main {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        flex: 1;
+      }
+
+      .pane-title-prefix {
+        color: #8c8c8c;
+        font-weight: 600;
+      }
+
+      .doc-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: #262626;
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .parse-state-tag {
+        margin-inline-start: 2px;
       }
 
       .pane-actions-left,
@@ -481,13 +485,56 @@ watch(() => props.node.visible, (value) => {
         border-bottom: 0;
       }
 
-      .b2-meta-row {
+      .b2-tabs {
+        flex: 1;
+        min-width: 0;
+
+        :deep(.ant-tabs-nav) {
+          margin: 0;
+        }
+
+        :deep(.ant-tabs-tab) {
+          padding: 6px 0;
+          font-weight: 500;
+        }
+      }
+
+      .parse-progress-row {
         display: flex;
         align-items: center;
-        flex-wrap: wrap;
         gap: 8px;
         padding: 8px 12px;
         border-bottom: 1px solid #f0f0f0;
+        background: #fafafa;
+      }
+
+      .b2-content {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .markdown-edit-wrap {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+
+      .markdown-edit-actions {
+        display: flex;
+        justify-content: flex-end;
+        padding: 8px 12px 12px;
+        border-top: 1px solid #f0f0f0;
+      }
+
+      .b2-empty {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
       }
     }
 
@@ -515,6 +562,7 @@ watch(() => props.node.visible, (value) => {
       .image-viewer {
         max-width: 100%;
         max-height: 100%;
+        object-fit: contain;
         display: block;
         margin: 0 auto;
       }
@@ -535,6 +583,22 @@ watch(() => props.node.visible, (value) => {
 
     .markdown-preview {
       padding: 16px;
+      overflow: auto;
+      height: 100%;
+      font-size: 14px;
+      line-height: 1.75;
+      color: #262626;
+
+      :deep(table) {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      :deep(td),
+      :deep(th) {
+        border: 1px solid #f0f0f0;
+        padding: 6px 8px;
+      }
 
       pre {
         background: #f6f8fa;
@@ -550,23 +614,19 @@ watch(() => props.node.visible, (value) => {
     .markdown-editor {
       margin: 12px;
       flex: 1;
+      min-height: 0;
+
+      :deep(.ant-input-textarea) {
+        height: 100%;
+      }
+
+      :deep(.ant-input) {
+        height: 100% !important;
+        resize: none;
+        font-size: 13px;
+        line-height: 1.6;
+      }
     }
-  }
-
-  .processing-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    width: min(460px, 100%);
-    flex-wrap: nowrap;
-  }
-
-  .ingest-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
   }
 
   .processing-progress {
@@ -581,81 +641,77 @@ watch(() => props.node.visible, (value) => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    min-width: 0;
+    min-width: 60px;
   }
 
-  .parse-btn,
-  .ingest-btn {
+  .action-btn {
     height: 32px;
     border-radius: 8px;
     font-weight: 500;
+    padding: 0 14px;
   }
 
-  .visible-switch {
-    min-width: 72px;
+  .action-switch {
+    min-width: 78px;
+    height: 32px;
+    line-height: 30px;
+    border-radius: 16px;
+
+    :deep(.ant-switch-handle) {
+      top: 3px;
+    }
+
+    :deep(.ant-switch-inner) {
+      font-size: 12px;
+      white-space: nowrap;
+    }
   }
 
-  .structured-stats {
-    margin-top: 0;
+  .stats-btn {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+    display: inline-flex;
+    justify-content: center;
+  }
+
+  .ingest-modal-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 6px;
+  }
+
+  .ingest-stage {
+    font-size: 13px;
+    color: #595959;
+  }
+
+  .ingest-result {
+    font-size: 14px;
+    color: #1677ff;
+    font-weight: 600;
+  }
+
+  .stats-modal-content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .stats-total {
+    font-weight: 600;
+    color: #262626;
+  }
+
+  .stats-row {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
+    justify-content: space-between;
   }
 
   &.dark-mode {
-    .doc-actions-bar {
-      background: #1f1f1f !important;
-      border-bottom-color: #303030 !important;
-    }
-
-    .doc-actions-bar :deep(.ant-select .ant-select-selector) {
-      background: #262626 !important;
-      border-color: #434343 !important;
-      color: rgba(255, 255, 255, 0.88) !important;
-    }
-
-    .doc-actions-bar :deep(.ant-select .ant-select-selection-item) {
-      color: rgba(255, 255, 255, 0.88) !important;
-    }
-
-    .doc-actions-bar :deep(.ant-select .ant-select-arrow) {
-      color: rgba(255, 255, 255, 0.65) !important;
-    }
-
-    .doc-actions-bar :deep(.ant-select.ant-select-focused .ant-select-selector) {
-      border-color: #4096ff !important;
-      box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2) !important;
-    }
-  }
-}
-
-// Dark mode
-:global(.dark-mode) {
-  .doc-preview {
-    .doc-actions-bar {
-      background: #1f1f1f !important;
-      border-bottom-color: #303030 !important;
-    }
-
-    .doc-actions-bar :deep(.ant-select .ant-select-selector) {
-      background: #262626 !important;
-      border-color: #434343 !important;
-      color: rgba(255, 255, 255, 0.88) !important;
-    }
-
-    .doc-actions-bar :deep(.ant-select .ant-select-selection-item) {
-      color: rgba(255, 255, 255, 0.88) !important;
-    }
-
-    .doc-actions-bar :deep(.ant-select .ant-select-arrow) {
-      color: rgba(255, 255, 255, 0.65) !important;
-    }
-
-    .doc-actions-bar :deep(.ant-select.ant-select-focused .ant-select-selector) {
-      border-color: #4096ff !important;
-      box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2) !important;
-    }
+    background: #141414;
 
     .preview-content {
       .split-preview {
@@ -673,6 +729,8 @@ watch(() => props.node.visible, (value) => {
       }
 
       .markdown-preview {
+        color: rgba(255, 255, 255, 0.85);
+
         pre {
           background: #272727;
           color: rgba(255, 255, 255, 0.85);

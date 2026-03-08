@@ -42,9 +42,9 @@
               <!-- 自定义图标 -->
               <template #icon="{ node }">
                 <FolderOutlined v-if="node?.isFolder" style="color: #faad14" />
-                <FilePdfOutlined v-else-if="getFileType(node?.title) === 'pdf'" style="color: #ff4d4f" />
-                <FileWordOutlined v-else-if="getFileType(node?.title) === 'word'" style="color: #1890ff" />
-                <FileMarkdownOutlined v-else-if="getFileType(node?.title) === 'markdown'" style="color: #13c2c2" />
+                <FilePdfOutlined v-else-if="getFileType(node) === 'pdf'" style="color: #ff4d4f" />
+                <FileWordOutlined v-else-if="getFileType(node) === 'word'" style="color: #1890ff" />
+                <FileMarkdownOutlined v-else-if="getFileType(node) === 'markdown'" style="color: #13c2c2" />
                 <FileTextOutlined v-else style="color: #8c8c8c" />
               </template>
 
@@ -224,6 +224,7 @@ const detailDoc = ref<TreeNode | null>(null)
 
 // 文档内容
 const docContent = ref('')
+const docContentDocId = ref('')
 
 // 计算属性
 const folderModalTitle = computed(() => folderForm.value.isNew ? '新建文件夹' : '重命名')
@@ -271,13 +272,16 @@ const getStatusText = (status: string) => {
   return texts[status] || '未知'
 }
 
-const getFileType = (fileName?: string) => {
-  const ext = String(fileName || '').toLowerCase().split('.').pop() || ''
+const getFileType = (node?: Partial<SmartTreeNode> | null) => {
+  const source = node?.filePath || node?.file_path || node?.title || ''
+  const ext = String(source).toLowerCase().split('.').pop() || ''
   if (ext === 'pdf') return 'pdf'
   if (ext === 'doc' || ext === 'docx') return 'word'
   if (ext === 'md' || ext === 'markdown') return 'markdown'
   return 'file'
 }
+
+const keepCurrentPreview = (docId: string) => docContentDocId.value === docId && Boolean(docContent.value)
 
 // 加载节点
 const loadNodes = async (focusNodeKey?: string) => {
@@ -322,8 +326,11 @@ const loadNodes = async (focusNodeKey?: string) => {
             await loadDocContent(node.key)
             await loadStructuredStats(node.key)
           } else {
-            docContent.value = ''
-            structuredStats.value = {}
+            if (!keepCurrentPreview(node.key)) {
+              docContent.value = ''
+              docContentDocId.value = ''
+              structuredStats.value = {}
+            }
           }
           if (node.status === 'processing' && (node as any).parseTaskId) {
             startParsePolling((node as any).parseTaskId, node.key)
@@ -350,8 +357,11 @@ const onTreeSelect = async (keys: string[], nodes: SmartTreeNode[]) => {
         await loadDocContent(node.key)
         await loadStructuredStats(node.key)
       } else {
-        docContent.value = ''
-        structuredStats.value = {}
+        if (!keepCurrentPreview(node.key)) {
+          docContent.value = ''
+          docContentDocId.value = ''
+          structuredStats.value = {}
+        }
       }
       if (node.status === 'processing' && node.parseTaskId) {
         startParsePolling(node.parseTaskId, node.key)
@@ -367,8 +377,11 @@ const loadDocContent = async (docId: string) => {
   try {
     const result = await knowledgeApi.getDocument('default', docId) as unknown as { content: string }
     docContent.value = result.content || '暂无内容'
+    docContentDocId.value = docId
   } catch (error) {
     docContent.value = ''
+    docContentDocId.value = ''
+    structuredStats.value = {}
   }
 }
 
@@ -514,6 +527,12 @@ const showDocDetail = (node: SmartTreeNode) => {
 const parseDocument = async (node: SmartTreeNode) => {
   try {
     resetIngestState()
+    if (selectedNode.value && selectedNode.value.key === node.key) {
+      selectedNode.value.status = 'processing'
+      selectedNode.value.parseError = ''
+      selectedNode.value.parseProgress = 0
+      selectedNode.value.parseStage = 'queued'
+    }
     const result = await knowledgeApi.parseDocumentAsync('default', node.key, node.filePath) as any
     const taskId = result?.task_id
     message.success('开始解析文档')
