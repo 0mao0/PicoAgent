@@ -76,6 +76,63 @@ flowchart TB
 
 ---
 
+## PDF 对比高亮逻辑架构（后端）
+
+```mermaid
+flowchart TB
+  subgraph Ingest["解析入口 apps/api-server/main.py"]
+    ParseReq["POST /api/knowledge/parse\n提交解析任务"]
+    ParseTask["_run_parse_task\n执行 MinerU 解析与落盘"]
+  end
+
+  subgraph Parser["解析核心 services/docs-core/parser/mineru_parser.py"]
+    ParseMinerU["parse_document_with_mineru\n请求 MinerU 云端解析"]
+    ExtractZip["_extract_zip_archive\n解压 cloud_result.zip"]
+    BuildFinal["_build_final_result\n聚合 markdown + blocks + assets"]
+    RecoverBlocks["ZIP 兜底恢复 blocks\n修复空 mineru_blocks.json"]
+  end
+
+  subgraph Storage["存储层 services/docs-core/storage/file_storage.py"]
+    SaveMd["save_parsed_markdown\n写入 parsed/content.md"]
+    SaveBlocks["save_mineru_blocks\n写入 parsed/mineru_blocks.json"]
+    KeepAssets["保留 raw/cloud_result/images\n用于前端图片展示"]
+  end
+
+  subgraph ReadApi["读取入口 apps/api-server/main.py"]
+    GetDoc["GET /api/knowledge/document/{library_id}/{doc_id}\n返回 content + storage + mineru_blocks"]
+    GetStructured["GET /api/knowledge/document/{library_id}/{doc_id}/structured\n返回 structured_index.items"]
+  end
+
+  subgraph Contract["前端联动契约"]
+    PageFields["页码字段\npage/page_no/page_idx"]
+    RectFields["坐标字段\nbbox/rect/x0y0x1y1"]
+    LineFields["行号字段\nline_start/line_end"]
+  end
+
+  ParseReq --> ParseTask
+  ParseTask --> ParseMinerU
+  ParseMinerU --> ExtractZip
+  ExtractZip --> BuildFinal
+  BuildFinal --> RecoverBlocks
+  RecoverBlocks --> SaveMd
+  RecoverBlocks --> SaveBlocks
+  RecoverBlocks --> KeepAssets
+
+  SaveMd --> GetDoc
+  SaveBlocks --> GetDoc
+  SaveBlocks --> GetStructured
+  KeepAssets --> GetDoc
+
+  GetDoc --> PageFields
+  GetStructured --> PageFields
+  GetDoc --> RectFields
+  GetStructured --> RectFields
+  GetDoc --> LineFields
+  GetStructured --> LineFields
+```
+
+---
+
 ## 一文档一目录规范
 
 ```text

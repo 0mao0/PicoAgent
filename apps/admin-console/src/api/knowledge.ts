@@ -23,6 +23,7 @@ interface DocumentResponse {
   content: string
   storage: DocumentStorageManifest
   mineru_blocks?: Record<string, any>[]
+  middle_data?: Record<string, any> | null
 }
 
 api.interceptors.request.use(config => {

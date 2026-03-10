@@ -8,6 +8,7 @@
 
 - [前端常用命令（自动同步）](#前端常用命令自动同步)
 - [前端架构图（重绘）](#前端架构图重绘)
+- [PDF 对比高亮逻辑架构（前端）](#pdf-对比高亮逻辑架构前端)
 - [文档解析与对比查改改造清单（可直接开工）](#文档解析与对比查改改造清单可直接开工)
 - [统一资源架构（已落地）](#统一资源架构已落地)
 - [统一资源执行清单（按文件级）](#统一资源执行清单按文件级)
@@ -131,6 +132,58 @@ admin-console（管理路由型）
          ├─ 左：SmartTree（管理态）
          ├─ 中：B区（状态机 + B1/B2 + 策略切换）
          └─ 右：AIChat（共享对话组件）
+```
+
+---
+
+## PDF 对比高亮逻辑架构（前端）
+
+```mermaid
+flowchart TB
+  subgraph DataIn["数据输入层"]
+    Storage["/api/knowledge/document/{library_id}/{doc_id}\nstorage + content + mineru_blocks"]
+    StructApi["/api/knowledge/document/{library_id}/{doc_id}/structured\nstructured_index.items"]
+    NodeState["KnowledgeManage 当前文档状态\nselectedNode + selectedDocumentContent"]
+  end
+
+  subgraph Assemble["前端组装层 KnowledgeManage.vue"]
+    ParseBlocks["parseMineruBlocks\n过滤无效块/标准化字段"]
+    BuildIndex["buildStructuredItems\n结构化索引兜底组装"]
+    BuildFallback["buildMiddleFallbackItems\n仅基于 content 生成标题锚点"]
+    PassProps["向 DocumentParsedWorkspace 透传\nmineruBlocks/structuredItems/docContent"]
+  end
+
+  subgraph LinkCore["联动核心 DocumentParsedWorkspace.vue"]
+    ResolvePage["resolvePageNumber\npage/page_idx 统一解析"]
+    RectNorm["normalizeRect\n按页尺寸动态归一化"]
+    ToLinked["toLinkedHighlight\n标准化高亮实体"]
+    MergePool["linkedHighlights\nstructured 优先 + mineru 兜底"]
+    ActiveWatch["watch(linkedHighlights,pdfPage)\n自动维护 activeLinkedItemId"]
+  end
+
+  subgraph Render["渲染层 DocumentParsedPaneLeft.vue"]
+    PageFilter["visibleHighlights\n按当前页过滤"]
+    ActiveOnly["activeHighlightId 命中时\n仅渲染 active 框"]
+    DrawBox["PDF 覆盖层绘制蓝框"]
+  end
+
+  Storage --> ParseBlocks
+  StructApi --> BuildIndex
+  NodeState --> BuildFallback
+  ParseBlocks --> PassProps
+  BuildIndex --> PassProps
+  BuildFallback --> PassProps
+
+  PassProps --> ResolvePage
+  ResolvePage --> RectNorm
+  RectNorm --> ToLinked
+  ToLinked --> MergePool
+  MergePool --> ActiveWatch
+
+  MergePool --> PageFilter
+  ActiveWatch --> ActiveOnly
+  PageFilter --> ActiveOnly
+  ActiveOnly --> DrawBox
 ```
 
 ---

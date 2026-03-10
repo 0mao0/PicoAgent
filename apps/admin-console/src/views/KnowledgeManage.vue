@@ -287,6 +287,46 @@ const getFileType = (node?: Partial<SmartTreeNode> | null) => getPreviewFileType
 
 const keepCurrentPreview = (docId: string) => docContentDocId.value === docId && Boolean(docContent.value)
 
+const extractPageHintFromLine = (line: string): number | null => {
+  const match = line.match(/[（(]\s*(\d{1,4})\s*[）)]\s*$/)
+  if (!match) return null
+  const page = Number(match[1])
+  if (!Number.isFinite(page) || page <= 0) return null
+  return Math.round(page)
+}
+
+const buildMiddleFallbackItems = (content: string): StructuredIndexItem[] => {
+  if (!content.trim()) return []
+  const lines = content.split('\n')
+  const result: StructuredIndexItem[] = []
+  let orderIndex = 0
+  lines.forEach((line: string, index: number) => {
+    const trimmed = (line || '').trim()
+    if (!trimmed) return
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/)
+    const numberedMatch = trimmed.match(/^\d+(?:\.\d+){0,3}\s+(.+)$/)
+    if (!headingMatch && !numberedMatch) return
+    const text = ((headingMatch?.[2] || numberedMatch?.[1] || '').trim()).slice(0, 160)
+    if (!text) return
+    const pageHint = extractPageHintFromLine(trimmed)
+    result.push({
+      id: `middle-${index + 1}`,
+      item_type: headingMatch ? 'heading' : 'section',
+      title: text,
+      content: text,
+      order_index: orderIndex++,
+      meta: {
+        line_start: index + 1,
+        line_end: index + 1,
+        heading_level: headingMatch ? headingMatch[1].length : undefined,
+        page: pageHint ?? undefined,
+        page_no: pageHint ?? undefined
+      }
+    })
+  })
+  return result
+}
+
 // 加载节点
 const loadNodes = async (focusNodeKey?: string) => {
   try {
@@ -365,7 +405,7 @@ const onTreeSelect = async (keys: string[], nodes: SmartTreeNode[]) => {
         if (node.strategy) {
           await loadStructuredIndex()
         } else {
-          structuredItems.value = []
+          structuredItems.value = buildMiddleFallbackItems(docContent.value)
         }
       } else {
         if (!keepCurrentPreview(node.key)) {
@@ -428,9 +468,10 @@ const loadStructuredIndex = async (itemType?: string, keyword?: string) => {
   }
   try {
     const result = await knowledgeApi.getStructuredIndex(selectedNode.value.key, strategy, itemType, keyword)
-    structuredItems.value = Array.isArray(result?.items) ? result.items : []
+    const fromApi = Array.isArray(result?.items) ? result.items : []
+    structuredItems.value = fromApi.length ? fromApi : buildMiddleFallbackItems(docContent.value)
   } catch (error) {
-    structuredItems.value = []
+    structuredItems.value = buildMiddleFallbackItems(docContent.value)
   }
 }
 

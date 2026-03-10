@@ -9,6 +9,7 @@ import time
 import re
 import io
 import zipfile
+import shutil
 from datetime import datetime
 
 load_dotenv()
@@ -40,6 +41,28 @@ class MinerUParser:
         self.min_free_memory_mib = max(1, int(os.getenv('MINERU_MIN_FREE_MEMORY_MIB', '256')))
         self.cloud_poll_max_attempts = max(1, int(os.getenv('MINERU_CLOUD_POLL_MAX_ATTEMPTS', '45')))
         self.cloud_poll_interval_seconds = max(1, int(os.getenv('MINERU_CLOUD_POLL_INTERVAL_SECONDS', '4')))
+        self.proxy_fallback_enabled = os.getenv('MINERU_PROXY_FALLBACK_ENABLED', '1') != '0'
+        self.keep_raw_debug_json = os.getenv('MINERU_KEEP_RAW_DEBUG_JSON', '0') == '1'
+        self.keep_cloud_result_non_images = os.getenv('MINERU_KEEP_CLOUD_RESULT_NON_IMAGES', '0') == '1'
+
+    def _request_with_proxy_fallback(self, method: str, url: str, **kwargs):
+        """执行请求，代理失败时自动回退直连。"""
+        try:
+            return requests.request(method=method, url=url, **kwargs)
+        except requests.exceptions.ProxyError:
+            if not self.proxy_fallback_enabled:
+                raise
+            retry_kwargs = dict(kwargs)
+            retry_kwargs['proxies'] = {'http': None, 'https': None}
+            return requests.request(method=method, url=url, **retry_kwargs)
+        except requests.exceptions.ConnectionError as error:
+            if not self.proxy_fallback_enabled:
+                raise
+            if 'proxy' not in str(error).lower():
+                raise
+            retry_kwargs = dict(kwargs)
+            retry_kwargs['proxies'] = {'http': None, 'https': None}
+            return requests.request(method=method, url=url, **retry_kwargs)
 
     def _normalize_api_url(self, api_url: str) -> str:
         """规范化 MinerU API 地址"""
@@ -80,7 +103,8 @@ class MinerUParser:
         self._direct_base_url_checked = True
         for base_url in self._get_direct_base_candidates():
             try:
-                response = requests.get(
+                response = self._request_with_proxy_fallback(
+                    'GET',
                     f'{base_url}/openapi.json',
                     timeout=8,
                     verify=False
@@ -233,6 +257,16 @@ class MinerUParser:
         mineru_blocks = parsed.get('mineru_blocks')
         if not isinstance(mineru_blocks, list) or not mineru_blocks:
             mineru_blocks = self._extract_mineru_blocks_from_output_dir(output_dir)
+        if not mineru_blocks:
+            raw_zip = Path(output_dir) / 'raw' / 'cloud_result.zip'
+            if raw_zip.exists() and raw_zip.is_file():
+                try:
+                    zip_bytes = raw_zip.read_bytes()
+                    mineru_blocks = self._extract_blocks_from_zip(zip_bytes)
+                    self._extract_zip_archive(zip_bytes, Path(output_dir) / 'raw' / 'cloud_result')
+                    self._prune_raw_artifacts(Path(output_dir) / 'raw')
+                except Exception:
+                    mineru_blocks = []
         return {
             'success': parsed.get('success', False),
             'md_file': parsed.get('md_file'),
@@ -245,7 +279,7 @@ class MinerUParser:
 
     def _is_block_candidate(self, payload: Dict[str, Any]) -> bool:
         position_keys = ('bbox', 'rect', 'box', 'pdf_bbox', 'pdf_rect', 'position')
-        page_keys = ('page', 'page_no', 'pageNo', 'page_index')
+        page_keys = ('page', 'page_no', 'pageNo', 'page_index', 'page_idx')
         line_keys = ('line', 'line_start', 'line_end', 'lineStart', 'lineEnd', 'start_line', 'end_line')
         has_position = any(key in payload for key in position_keys)
         has_page = any(key in payload for key in page_keys)
@@ -262,6 +296,10 @@ class MinerUParser:
                 block['rect'] = position.get('rect')
             if 'page' not in block and isinstance(position.get('page'), (int, float)):
                 block['page'] = position.get('page')
+            if 'page_idx' not in block and isinstance(position.get('page_idx'), (int, float)):
+                block['page_idx'] = position.get('page_idx')
+        if 'page' not in block and isinstance(block.get('page_idx'), (int, float)):
+            block['page'] = int(block['page_idx']) + 1
         if not block.get('id'):
             block['id'] = f'mineru-block-{index}'
         block['source_file'] = source
@@ -322,6 +360,7 @@ class MinerUParser:
     ) -> Dict[str, Any]:
         """将 Markdown 写入标准输出文件并返回成功结果。"""
         md_file_path = os.path.join(output_dir, 'parsed.md')
+        markdown = self._normalize_markdown_image_paths(output_dir, markdown)
         with open(md_file_path, 'w', encoding='utf-8') as output_file:
             output_file.write(markdown)
         return self._build_parse_result(
@@ -338,17 +377,21 @@ class MinerUParser:
         source = ''
         zip_bytes: Optional[bytes] = None
         if markdown_url:
-            md_resp = requests.get(markdown_url, timeout=120, verify=False)
+            md_resp = self._request_with_proxy_fallback('GET', markdown_url, timeout=120, verify=False)
             if md_resp.status_code == 200 and self._is_valid_markdown_text(md_resp.text):
                 markdown = md_resp.text
                 source = 'markdown_url'
         if not markdown and zip_url:
-            zip_resp = requests.get(zip_url, timeout=120, verify=False)
+            zip_resp = self._request_with_proxy_fallback('GET', zip_url, timeout=120, verify=False)
             if zip_resp.status_code == 200:
                 markdown = self._download_markdown_from_zip(zip_resp.content)
                 if markdown:
                     source = 'zip_url'
                     zip_bytes = zip_resp.content
+        elif markdown and zip_url:
+            zip_resp = self._request_with_proxy_fallback('GET', zip_url, timeout=120, verify=False)
+            if zip_resp.status_code == 200:
+                zip_bytes = zip_resp.content
         return {'markdown': markdown, 'source': source, 'zip_bytes': zip_bytes}
 
     def _download_markdown_from_zip(self, zip_bytes: bytes) -> Optional[str]:
@@ -368,6 +411,172 @@ class MinerUParser:
             return None
         return None
 
+    def _extract_blocks_from_zip(self, zip_bytes: bytes) -> List[Dict[str, Any]]:
+        """从云端 ZIP 包中的 JSON/JSONL 文件提取块级结构。"""
+        blocks: List[Dict[str, Any]] = []
+        seen = set()
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+                for name in archive.namelist():
+                    lowered = name.lower()
+                    if not (lowered.endswith('.json') or lowered.endswith('.jsonl')):
+                        continue
+                    try:
+                        payload_bytes = archive.read(name)
+                    except Exception:
+                        continue
+                    parsed_payload: Any = None
+                    if lowered.endswith('.json'):
+                        try:
+                            parsed_payload = json.loads(payload_bytes.decode('utf-8', errors='ignore'))
+                        except Exception:
+                            parsed_payload = None
+                    else:
+                        rows: List[Any] = []
+                        for line in payload_bytes.decode('utf-8', errors='ignore').splitlines():
+                            raw_line = line.strip()
+                            if not raw_line:
+                                continue
+                            try:
+                                rows.append(json.loads(raw_line))
+                            except Exception:
+                                continue
+                        parsed_payload = rows
+                    if parsed_payload is None:
+                        continue
+                    extracted = self._extract_blocks_from_payload(parsed_payload, f'zip:{name}')
+                    for item in extracted:
+                        fingerprint = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                        if fingerprint in seen:
+                            continue
+                        seen.add(fingerprint)
+                        blocks.append(item)
+                        if len(blocks) >= 2000:
+                            return blocks
+        except Exception:
+            return []
+        return blocks
+
+    def _extract_zip_archive(self, zip_bytes: bytes, target_dir: Path) -> Dict[str, Any]:
+        """将云端 ZIP 解压到原始目录，保留结构化文件与图片资产。"""
+        if target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        total_files = 0
+        json_files = 0
+        image_files = 0
+        extracted_files: List[str] = []
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+                for info in archive.infolist():
+                    if info.is_dir():
+                        continue
+                    member = Path(info.filename)
+                    if member.is_absolute() or '..' in member.parts:
+                        continue
+                    destination = target_dir / member
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(info) as source, open(destination, 'wb') as output_handle:
+                        output_handle.write(source.read())
+                    total_files += 1
+                    lowered = destination.name.lower()
+                    if lowered.endswith('.json') or lowered.endswith('.jsonl'):
+                        json_files += 1
+                    if lowered.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.gif')):
+                        image_files += 1
+                    extracted_files.append(str(destination))
+        except Exception:
+            return {'extract_dir': str(target_dir), 'total_files': 0, 'json_files': 0, 'image_files': 0, 'files': []}
+        return {
+            'extract_dir': str(target_dir),
+            'total_files': total_files,
+            'json_files': json_files,
+            'image_files': image_files,
+            'files': extracted_files
+        }
+
+    def _is_image_file(self, file_name: str) -> bool:
+        lowered = (file_name or '').lower()
+        return lowered.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.gif'))
+
+    def _normalize_markdown_image_paths(self, output_dir: str, markdown: str) -> str:
+        """将 Markdown 图片路径统一映射到 raw/cloud_result/images。"""
+        raw_images_dir = Path(output_dir) / 'raw' / 'cloud_result' / 'images'
+        if not raw_images_dir.exists():
+            return markdown
+
+        pattern = re.compile(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)')
+
+        def rewrite(match: re.Match) -> str:
+            alt = match.group(1) or ''
+            source = (match.group(2) or '').strip()
+            title = match.group(3)
+            if not source:
+                return match.group(0)
+            lowered = source.lower()
+            if lowered.startswith(('http://', 'https://', 'data:', 'blob:', '/')):
+                return match.group(0)
+            normalized = source.replace('\\', '/')
+            if normalized.startswith('./'):
+                normalized = normalized[2:]
+            if normalized.startswith('raw/cloud_result/images/'):
+                return match.group(0)
+            if normalized.startswith('images/'):
+                normalized = f'raw/cloud_result/{normalized}'
+            title_fragment = f' "{title}"' if title is not None else ''
+            return f'![{alt}]({normalized}{title_fragment})'
+
+        return pattern.sub(rewrite, markdown or '')
+
+    def _prune_raw_artifacts(self, raw_dir: Path) -> None:
+        """清理不必要的原始调试文件，控制文档文件数量。"""
+        if not raw_dir.exists():
+            return
+        if not self.keep_raw_debug_json:
+            for file_name in ('cloud_create_response.json', 'cloud_query_response.json', 'direct_parse_response.json'):
+                file_path = raw_dir / file_name
+                if file_path.exists() and file_path.is_file():
+                    try:
+                        file_path.unlink()
+                    except Exception:
+                        pass
+        extract_dir = raw_dir / 'cloud_result'
+        if not extract_dir.exists() or self.keep_cloud_result_non_images:
+            return
+        for file_path in sorted(extract_dir.rglob('*'), reverse=True):
+            if not file_path.is_file():
+                continue
+            relative = file_path.relative_to(extract_dir).as_posix().lower()
+            if relative.startswith('images/') and self._is_image_file(file_path.name):
+                continue
+            try:
+                file_path.unlink()
+            except Exception:
+                continue
+        for path in sorted(extract_dir.rglob('*'), reverse=True):
+            if path.is_dir():
+                try:
+                    if not any(path.iterdir()):
+                        path.rmdir()
+                except Exception:
+                    continue
+
+    def recover_blocks_from_raw_dir(self, raw_dir: str) -> List[Dict[str, Any]]:
+        """从已落盘 raw 目录恢复块数据，兼容历史空块文档。"""
+        if not isinstance(raw_dir, str) or not raw_dir.strip():
+            return []
+        zip_path = Path(raw_dir) / 'cloud_result.zip'
+        if not zip_path.exists() or not zip_path.is_file():
+            return []
+        try:
+            zip_bytes = zip_path.read_bytes()
+            blocks = self._extract_blocks_from_zip(zip_bytes)
+            self._extract_zip_archive(zip_bytes, Path(raw_dir) / 'cloud_result')
+            self._prune_raw_artifacts(Path(raw_dir))
+            return blocks
+        except Exception:
+            return []
+
     def _parse_document_cloud_batch(self, input_path: str, output_dir: str) -> Optional[Dict[str, Any]]:
         """使用云端 batch 接口解析文档。"""
         if not self.api_key:
@@ -381,7 +590,8 @@ class MinerUParser:
             'model_version': 'vlm'
         }
         try:
-            create_resp = requests.post(
+            create_resp = self._request_with_proxy_fallback(
+                'POST',
                 f'{base_url}/file-urls/batch',
                 headers=headers,
                 json=create_payload,
@@ -404,7 +614,13 @@ class MinerUParser:
 
             upload_url = str(file_urls[0])
             with open(input_path, 'rb') as file_obj:
-                upload_resp = requests.put(upload_url, data=file_obj, timeout=300, verify=False)
+                upload_resp = self._request_with_proxy_fallback(
+                    'PUT',
+                    upload_url,
+                    data=file_obj,
+                    timeout=300,
+                    verify=False
+                )
             if upload_resp.status_code not in (200, 201):
                 detail = (upload_resp.text or '').strip()[:320]
                 return self._build_parse_result(
@@ -416,7 +632,8 @@ class MinerUParser:
             last_query_payload: Dict[str, Any] = {}
             for _ in range(self.cloud_poll_max_attempts):
                 time.sleep(self.cloud_poll_interval_seconds)
-                query_resp = requests.get(
+                query_resp = self._request_with_proxy_fallback(
+                    'GET',
                     f'{base_url}/extract-results/batch/{batch_id}',
                     headers=headers,
                     timeout=60,
@@ -449,6 +666,10 @@ class MinerUParser:
                     if isinstance(zip_bytes, (bytes, bytearray)) and zip_bytes:
                         with open(raw_dir / 'cloud_result.zip', 'wb') as handle:
                             handle.write(bytes(zip_bytes))
+                        extract_summary = self._extract_zip_archive(bytes(zip_bytes), raw_dir / 'cloud_result')
+                        self._prune_raw_artifacts(raw_dir)
+                    else:
+                        extract_summary = {'extract_dir': '', 'total_files': 0, 'json_files': 0, 'image_files': 0, 'files': []}
                     manifest_payload = {
                         'batch_id': batch_id,
                         'data_id': data_id,
@@ -456,10 +677,15 @@ class MinerUParser:
                         'markdown_url': markdown_url,
                         'zip_url': zip_url,
                         'markdown_source': markdown_bundle.get('source') or '',
+                        'zip_extract': extract_summary,
                         'saved_at': datetime.now().isoformat()
                     }
                     self._write_json_output(raw_dir / 'cloud_result_manifest.json', manifest_payload)
                     cloud_blocks = self._extract_blocks_from_payload(first, 'cloud_result')
+                    if isinstance(zip_bytes, (bytes, bytearray)) and zip_bytes:
+                        zip_blocks = self._extract_blocks_from_zip(bytes(zip_bytes))
+                        if zip_blocks:
+                            cloud_blocks.extend(zip_blocks)
                     return self._write_markdown_file(
                         output_dir,
                         markdown,
@@ -571,7 +797,8 @@ class MinerUParser:
             last_error = ''
             for index, data in enumerate(retry_profiles):
                 with open(input_path, 'rb') as file_obj:
-                    response = requests.post(
+                    response = self._request_with_proxy_fallback(
+                        'POST',
                         f'{base_url}/file_parse',
                         headers={'Authorization': f'Bearer {self.api_key}'} if self.api_key else {},
                         data=data,

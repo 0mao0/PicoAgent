@@ -25,7 +25,6 @@
         <template #right>
           <Panel title="AI 对话" :icon="MessageOutlined">
             <AIChat
-              ref="aiChatRef"
               title=""
               placeholder="输入消息，Enter 发送..."
               :show-context-info="true"
@@ -41,7 +40,7 @@
 
 <script setup lang="ts">
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { ref, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import { MessageOutlined } from '@ant-design/icons-vue'
 import { AppHeader, SplitPanes, Panel, useTheme, type NavItem } from '@angineer/ui-kit'
 import { AIChat } from '@angineer/docs-ui'
@@ -50,7 +49,6 @@ import Workbench from './layouts/Workbench.vue'
 import { useChatStore } from './stores/chat'
 
 const { isDark, themeConfig, appClass, toggleTheme } = useTheme()
-const aiChatRef = ref<InstanceType<typeof AIChat> | null>(null)
 const chatStore = useChatStore()
 
 // 组件挂载时获取模型列表
@@ -60,7 +58,6 @@ onMounted(() => {
 
 // 处理 AI Chat 准备就绪
 const handleChatReady = () => {
-  console.log('AI Chat 组件已就绪')
 }
 
 // 处理发送消息

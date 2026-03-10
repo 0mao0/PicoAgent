@@ -184,23 +184,12 @@ def _run_parse_task(task_id: str, library_id: str, doc_id: str, target_file_path
         saved_path = file_storage.save_markdown(library_id, doc_id, markdown_content)
         mineru_blocks = result.get('mineru_blocks') if isinstance(result.get('mineru_blocks'), list) else []
         file_storage.save_mineru_blocks(library_id, doc_id, mineru_blocks)
-        middle_payload = {
-            'schema_version': 'middle.v1',
-            'library_id': library_id,
-            'doc_id': doc_id,
-            'source_file': target_file_path,
-            'generated_at': datetime.now().isoformat(),
-            'markdown': {
-                'content': markdown_content,
-                'line_count': markdown_content.count('\n') + (1 if markdown_content else 0)
-            },
-            'mineru_blocks': mineru_blocks,
-            'stats': {
-                'markdown_chars': len(markdown_content),
-                'block_count': len(mineru_blocks)
-            }
-        }
-        file_storage.save_middle_json(library_id, doc_id, middle_payload)
+        middle_json_path = file_storage.get_doc_manifest(library_id, doc_id).get('middle_json')
+        if isinstance(middle_json_path, str) and middle_json_path and os.path.isfile(middle_json_path):
+            try:
+                os.remove(middle_json_path)
+            except Exception:
+                pass
         parse_assets_dir = os.path.join(output_dir, 'assets')
         if os.path.isdir(parse_assets_dir):
             file_storage.save_assets(library_id, doc_id, parse_assets_dir)
@@ -1501,14 +1490,23 @@ def rag_build(library_id: str, doc_ids: list):
 @app.get("/api/knowledge/document/{library_id}/{doc_id}")
 def get_document(library_id: str, doc_id: str):
     """获取文档内容"""
-    from docs_core import file_storage
+    from docs_core import file_storage, mineru_parser
     content = file_storage.read_markdown(library_id, doc_id)
     if content is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    storage_manifest = file_storage.get_doc_manifest(library_id, doc_id)
+    mineru_blocks = file_storage.read_mineru_blocks(library_id, doc_id)
+    if not mineru_blocks:
+        raw_dir = storage_manifest.get('raw_dir')
+        if isinstance(raw_dir, str) and raw_dir.strip():
+            recovered_blocks = mineru_parser.recover_blocks_from_raw_dir(raw_dir)
+            if recovered_blocks:
+                file_storage.save_mineru_blocks(library_id, doc_id, recovered_blocks)
+                mineru_blocks = recovered_blocks
     return {
         "content": content,
-        "storage": file_storage.get_doc_manifest(library_id, doc_id),
-        "mineru_blocks": file_storage.read_mineru_blocks(library_id, doc_id)
+        "storage": storage_manifest,
+        "mineru_blocks": mineru_blocks
     }
 
 @app.put("/api/knowledge/document/{library_id}/{doc_id}")
