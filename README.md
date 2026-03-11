@@ -99,7 +99,7 @@ cd AnGIneer
 pnpm install
 
 # 安装后端依赖
-pip install -e services/angineer-core/src -e services/sop-core/src -e services/docs-core/src -e services/geo-core/src -e services/engtools/src
+pip install -e services/angineer-core -e services/sop-core -e services/docs-core -e services/geo-core -e services/engtools
 ```
 
 ### 3.3 启动服务

@@ -60,6 +60,8 @@ class KnowledgeService:
         self.db_path = self._resolve_db_path()
         self._init_db()
         self._load_from_db()
+        if not self.libraries:
+            self.create_library('default', '默认知识库', '系统自动创建的默认知识库')
 
     def _resolve_db_path(self) -> Path:
         root_dir = Path(__file__).resolve().parents[5]
@@ -68,90 +70,113 @@ class KnowledgeService:
         return data_dir / 'knowledge.sqlite3'
 
     def _get_conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            conn = sqlite3.connect(str(self.db_path), timeout=10)
+            conn.row_factory = sqlite3.Row
+            return conn
+        except sqlite3.Error as e:
+            print(f"Database connection error: {e}")
+            raise
 
     def _init_db(self) -> None:
-        with self._get_conn() as conn:
-            conn.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS libraries (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    description TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    '''
+                    CREATE TABLE IF NOT EXISTS libraries (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        description TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    '''
                 )
-                '''
-            )
-            conn.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS nodes (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    parent_id TEXT,
-                    visible INTEGER NOT NULL,
-                    library_id TEXT NOT NULL,
-                    file_path TEXT,
-                    status TEXT NOT NULL,
-                    sort_order INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                conn.execute(
+                    '''
+                    CREATE TABLE IF NOT EXISTS nodes (
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        parent_id TEXT,
+                        visible INTEGER NOT NULL,
+                        library_id TEXT NOT NULL,
+                        file_path TEXT,
+                        status TEXT NOT NULL,
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    '''
                 )
-                '''
-            )
-            node_columns = {row['name'] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
-            if 'parse_progress' not in node_columns:
-                conn.execute("ALTER TABLE nodes ADD COLUMN parse_progress INTEGER NOT NULL DEFAULT 0")
-            if 'parse_stage' not in node_columns:
-                conn.execute("ALTER TABLE nodes ADD COLUMN parse_stage TEXT")
-            if 'parse_error' not in node_columns:
-                conn.execute("ALTER TABLE nodes ADD COLUMN parse_error TEXT")
-            if 'parse_task_id' not in node_columns:
-                conn.execute("ALTER TABLE nodes ADD COLUMN parse_task_id TEXT")
-            if 'strategy' not in node_columns:
-                conn.execute("ALTER TABLE nodes ADD COLUMN strategy TEXT NOT NULL DEFAULT 'A_structured'")
-            conn.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS parse_tasks (
-                    id TEXT PRIMARY KEY,
-                    library_id TEXT NOT NULL,
-                    doc_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    progress INTEGER NOT NULL DEFAULT 0,
-                    stage TEXT NOT NULL,
-                    error TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                node_columns = {row['name'] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+                if 'parse_progress' not in node_columns:
+                    conn.execute("ALTER TABLE nodes ADD COLUMN parse_progress INTEGER NOT NULL DEFAULT 0")
+                if 'parse_stage' not in node_columns:
+                    conn.execute("ALTER TABLE nodes ADD COLUMN parse_stage TEXT")
+                if 'parse_error' not in node_columns:
+                    conn.execute("ALTER TABLE nodes ADD COLUMN parse_error TEXT")
+                if 'parse_task_id' not in node_columns:
+                    conn.execute("ALTER TABLE nodes ADD COLUMN parse_task_id TEXT")
+                if 'strategy' not in node_columns:
+                    conn.execute("ALTER TABLE nodes ADD COLUMN strategy TEXT NOT NULL DEFAULT 'A_structured'")
+                conn.execute(
+                    '''
+                    CREATE TABLE IF NOT EXISTS parse_tasks (
+                        id TEXT PRIMARY KEY,
+                        library_id TEXT NOT NULL,
+                        doc_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        progress INTEGER NOT NULL DEFAULT 0,
+                        stage TEXT NOT NULL,
+                        error TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    '''
                 )
-                '''
-            )
-            conn.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS document_segments (
-                    id TEXT PRIMARY KEY,
-                    doc_id TEXT NOT NULL,
-                    library_id TEXT NOT NULL,
-                    strategy TEXT NOT NULL,
-                    item_type TEXT NOT NULL,
-                    title TEXT,
-                    content TEXT NOT NULL,
-                    meta_json TEXT,
-                    order_index INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                conn.execute(
+                    '''
+                    CREATE TABLE IF NOT EXISTS document_segments (
+                        id TEXT PRIMARY KEY,
+                        doc_id TEXT NOT NULL,
+                        library_id TEXT NOT NULL,
+                        strategy TEXT NOT NULL,
+                        item_type TEXT NOT NULL,
+                        title TEXT,
+                        content TEXT NOT NULL,
+                        meta_json TEXT,
+                        order_index INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    '''
                 )
-                '''
-            )
-            conn.execute(
-                '''
-                CREATE INDEX IF NOT EXISTS idx_document_segments_doc_strategy
-                ON document_segments (doc_id, strategy, item_type, order_index)
-                '''
-            )
-            conn.commit()
+                conn.execute(
+                    '''
+                    CREATE INDEX IF NOT EXISTS idx_document_segments_doc_strategy
+                    ON document_segments (doc_id, strategy, item_type, order_index)
+                    '''
+                )
+                conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database initialization error: {e}")
+            raise
+
+    def _parse_datetime(self, dt_str: Optional[str]) -> datetime:
+        """安全解析日期字符串"""
+        if not dt_str:
+            return datetime.now()
+        try:
+            return datetime.fromisoformat(dt_str)
+        except (ValueError, TypeError):
+            # 兼容旧格式或不规范格式
+            try:
+                # 尝试常见的其他格式，或者回退到当前时间
+                from dateutil import parser
+                return parser.parse(dt_str)
+            except Exception:
+                return datetime.now()
 
     def _load_from_db(self) -> None:
         with self._get_conn() as conn:
@@ -179,8 +204,8 @@ class KnowledgeService:
                 id=row['id'],
                 name=row['name'],
                 description=row['description'],
-                created_at=datetime.fromisoformat(row['created_at']),
-                updated_at=datetime.fromisoformat(row['updated_at'])
+                created_at=self._parse_datetime(row['created_at']),
+                updated_at=self._parse_datetime(row['updated_at'])
             )
             for row in lib_rows
         ]
@@ -200,8 +225,8 @@ class KnowledgeService:
                 parse_task_id=row['parse_task_id'],
                 strategy=row['strategy'] or 'A_structured',
                 sort_order=int(row['sort_order'] or 0),
-                created_at=datetime.fromisoformat(row['created_at']),
-                updated_at=datetime.fromisoformat(row['updated_at'])
+                created_at=self._parse_datetime(row['created_at']),
+                updated_at=self._parse_datetime(row['updated_at'])
             )
             for row in node_rows
         ]
@@ -214,8 +239,8 @@ class KnowledgeService:
                 progress=int(row['progress'] or 0),
                 stage=row['stage'] or 'queued',
                 error=row['error'],
-                created_at=datetime.fromisoformat(row['created_at']),
-                updated_at=datetime.fromisoformat(row['updated_at'])
+                created_at=self._parse_datetime(row['created_at']),
+                updated_at=self._parse_datetime(row['updated_at'])
             )
             for row in task_rows
         ]
@@ -323,10 +348,10 @@ class KnowledgeService:
         """获取知识库列表"""
         return self.libraries
 
-    def create_library(self, name: str, description: str = '') -> KnowledgeLibrary:
+    def create_library(self, library_id: str, name: str, description: str = '') -> KnowledgeLibrary:
         """创建知识库"""
         library = KnowledgeLibrary(
-            id=f'lib-{len(self.libraries) + 1}',
+            id=library_id,
             name=name,
             description=description
         )
@@ -346,7 +371,7 @@ class KnowledgeService:
         nodes = [n for n in self.nodes if n.library_id == library_id]
         if visible:
             nodes = [n for n in nodes if n.visible]
-        return sorted(nodes, key=lambda n: ((n.parent_id or ''), n.sort_order, n.created_at))
+        return sorted(nodes, key=lambda n: (n.sort_order, n.created_at))
 
     def create_node(self, node: KnowledgeNode) -> KnowledgeNode:
         """创建节点"""

@@ -8,6 +8,7 @@ import sys
 import uuid
 import tempfile
 import threading
+from urllib.parse import quote
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File as FastAPIFile, Form
@@ -37,8 +38,12 @@ from engtools.BaseTool import ToolRegistry, register_tool
 from engtools import * 
 import geo_core.GisTool
 import engtools.KnowledgeTool
+from docs_core.api import parse_api
 
 app = FastAPI(title="AnGIneer API Bridge")
+
+# Mount sub-routers
+app.include_router(parse_api.router, prefix="/api/knowledge", tags=["Knowledge"])
 
 # Initialize SOP Loader
 SOP_DIR = os.path.join(ROOT_DIR, "data", "sops", "raw")
@@ -82,6 +87,47 @@ class SOPUpdate(BaseModel):
 class KnowledgeUpdate(BaseModel):
     data: Dict[str, Any]
 
+class KnowledgeLibraryCreate(BaseModel):
+    library_id: str
+    name: str
+    description: Optional[str] = ''
+
+class KnowledgeNodeCreate(BaseModel):
+    title: str
+    node_type: str
+    library_id: Optional[str] = 'default'
+    parent_id: Optional[str] = None
+    visible: Optional[bool] = False
+    sort_order: Optional[int] = 0
+
+class KnowledgeNodeUpdate(BaseModel):
+    title: Optional[str] = None
+    parent_id: Optional[str] = None
+    visible: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+class KnowledgeStrategyUpdate(BaseModel):
+    strategy: str
+
+class KnowledgeStructuredIndexRequest(BaseModel):
+    library_id: str
+    doc_id: str
+    strategy: Optional[str] = 'A_structured'
+
+class KnowledgeRagQueryRequest(BaseModel):
+    question: str
+    library_id: Optional[str] = 'default'
+    k: Optional[int] = 4
+    use_llm: Optional[bool] = True
+
+class KnowledgeRagBuildRequest(BaseModel):
+    library_id: str
+    doc_ids: List[str]
+
+class KnowledgeDocumentUpdate(BaseModel):
+    content: str
+
 # AI Chat 对话相关模型
 class ChatMessage(BaseModel):
     """聊天消息"""
@@ -111,36 +157,10 @@ class ChatStreamEvent(BaseModel):
     usage: Optional[Dict[str, int]] = None
     error: Optional[str] = None
 
+
 # --- Global State for UI Tracking ---
 # We'll use a simple global list to store execution logs for the frontend to poll
 execution_trace = []
-parse_worker_threads: Dict[str, threading.Thread] = {}
-
-
-def _update_parse_task_progress(
-    task_id: str,
-    doc_id: str,
-    status: str,
-    progress: int,
-    stage: str,
-    error: Optional[str] = None
-) -> None:
-    """更新解析任务和节点状态"""
-    from docs_core import knowledge_service
-    knowledge_service.update_parse_task(
-        task_id,
-        status=status,
-        progress=max(0, min(100, progress)),
-        stage=stage,
-        error=error
-    )
-    knowledge_service.update_node(
-        doc_id,
-        status='failed' if status == 'failed' else 'processing' if status in {'queued', 'processing'} else 'completed',
-        parse_progress=max(0, min(100, progress)),
-        parse_stage=stage,
-        parse_error=error
-    )
 
 
 def _extract_structured_items_from_markdown(markdown_text: str) -> List[Dict[str, Any]]:
@@ -159,60 +179,6 @@ def _build_structured_index_for_doc(library_id: str, doc_id: str, strategy: str 
         from docs_core.storage.pageindex_strategy import build_pageindex_for_doc
         return build_pageindex_for_doc(library_id, doc_id, strategy)
     raise ValueError(f'Unsupported strategy: {strategy}')
-
-
-def _run_parse_task(task_id: str, library_id: str, doc_id: str, target_file_path: str) -> None:
-    """后台执行解析任务"""
-    from docs_core import mineru_parser, file_storage, knowledge_service
-    try:
-        _update_parse_task_progress(task_id, doc_id, 'processing', 10, 'initializing')
-        output_dir = tempfile.mkdtemp(prefix=f'parse-{doc_id}-')
-        _update_parse_task_progress(task_id, doc_id, 'processing', 35, 'mineru_processing')
-        result = mineru_parser.parse_document(target_file_path, output_dir)
-        if not result.get('success'):
-            error_msg = result.get('error') or 'MinerU 解析失败'
-            _update_parse_task_progress(task_id, doc_id, 'failed', 100, 'failed', error_msg)
-            return
-        _update_parse_task_progress(task_id, doc_id, 'processing', 70, 'reading_markdown')
-        md_path = result.get('md_file')
-        if not md_path or not os.path.exists(md_path):
-            _update_parse_task_progress(task_id, doc_id, 'failed', 100, 'failed', '解析结果未生成 Markdown 文件')
-            return
-        with open(md_path, 'r', encoding='utf-8') as f:
-            markdown_content = f.read()
-        _update_parse_task_progress(task_id, doc_id, 'processing', 85, 'saving_markdown')
-        saved_path = file_storage.save_markdown(library_id, doc_id, markdown_content)
-        mineru_blocks = result.get('mineru_blocks') if isinstance(result.get('mineru_blocks'), list) else []
-        file_storage.save_mineru_blocks(library_id, doc_id, mineru_blocks)
-        middle_json_path = file_storage.get_doc_manifest(library_id, doc_id).get('middle_json')
-        if isinstance(middle_json_path, str) and middle_json_path and os.path.isfile(middle_json_path):
-            try:
-                os.remove(middle_json_path)
-            except Exception:
-                pass
-        parse_assets_dir = os.path.join(output_dir, 'assets')
-        if os.path.isdir(parse_assets_dir):
-            file_storage.save_assets(library_id, doc_id, parse_assets_dir)
-        parse_raw_dir = os.path.join(output_dir, 'raw')
-        if os.path.isdir(parse_raw_dir):
-            file_storage.save_raw_artifacts(library_id, doc_id, parse_raw_dir)
-        knowledge_service.update_node(
-            doc_id,
-            file_path=target_file_path,
-            parse_task_id=task_id,
-            parse_error=None
-        )
-        strategy = (knowledge_service.get_node(doc_id).strategy if knowledge_service.get_node(doc_id) else 'A_structured') or 'A_structured'
-        _update_parse_task_progress(task_id, doc_id, 'processing', 92, 'building_structured_index')
-        _build_structured_index_for_doc(library_id, doc_id, strategy)
-        _update_parse_task_progress(task_id, doc_id, 'completed', 100, 'completed')
-        knowledge_service.update_node(doc_id, status='completed', parse_progress=100, parse_stage='completed')
-        knowledge_service.update_parse_task(task_id, status='completed', progress=100, stage='completed', error=None)
-        print(f'[ParseTask] completed: task_id={task_id}, doc_id={doc_id}, markdown_path={saved_path}')
-    except Exception as error:
-        _update_parse_task_progress(task_id, doc_id, 'failed', 100, 'failed', str(error))
-    finally:
-        parse_worker_threads.pop(task_id, None)
 
 class TraceDispatcher(Dispatcher):
     """
@@ -1117,10 +1083,10 @@ def list_knowledge_libraries():
     return knowledge_service.list_libraries()
 
 @app.post("/api/knowledge/libraries")
-def create_knowledge_library(name: str, description: str = ''):
+def create_knowledge_library(request: KnowledgeLibraryCreate):
     """创建知识库"""
     from docs_core import knowledge_service
-    library = knowledge_service.create_library(name, description)
+    library = knowledge_service.create_library(request.library_id, request.name, request.description)
     return library
 
 @app.get("/api/knowledge/libraries/{library_id}")
@@ -1139,72 +1105,92 @@ def list_knowledge_nodes(library_id: str = 'default', visible: bool = False):
     return knowledge_service.list_nodes(library_id, visible)
 
 @app.post("/api/knowledge/nodes")
-def create_knowledge_node(
-    title: str,
-    node_type: str,
-    library_id: str = 'default',
-    parent_id: str = None,
-    visible: bool = False,
-    sort_order: int = 0
-):
+def create_knowledge_node(request: KnowledgeNodeCreate):
     """创建知识库节点"""
     from docs_core import knowledge_service, KnowledgeNode
-    if parent_id:
-        parent_node = knowledge_service.get_node(parent_id)
+    parent_id = request.parent_id
+    # 统一处理根节点标识
+    if not parent_id or parent_id in ['', 'undefined', '__root__', 'null', 'None']:
+        normalized_parent_id = None
+    else:
+        normalized_parent_id = parent_id
+
+    if normalized_parent_id:
+        parent_node = knowledge_service.get_node(normalized_parent_id)
         if not parent_node:
-            raise HTTPException(status_code=400, detail="Parent node not found")
+            raise HTTPException(status_code=400, detail=f"Parent node {normalized_parent_id} not found")
         if parent_node.type != 'folder':
-            raise HTTPException(status_code=400, detail="Parent node must be folder")
+            raise HTTPException(status_code=400, detail="Parent node must be a folder")
+    
     node = KnowledgeNode(
         id=f'node-{uuid.uuid4().hex[:8]}',
-        title=title,
-        type=node_type,
-        library_id=library_id,
-        parent_id=parent_id,
-        visible=visible,
-        sort_order=sort_order
+        title=request.title,
+        type=request.node_type,
+        library_id=request.library_id or 'default',
+        parent_id=normalized_parent_id,
+        visible=request.visible if request.visible is not None else False,
+        sort_order=request.sort_order if request.sort_order is not None else 0
     )
     return knowledge_service.create_node(node)
 
 @app.patch("/api/knowledge/nodes/{node_id}")
-def update_knowledge_node(
-    node_id: str,
-    title: Optional[str] = None,
-    parent_id: Optional[str] = None,
-    visible: Optional[bool] = None,
-    sort_order: Optional[int] = None
-):
+def update_knowledge_node(node_id: str, request: KnowledgeNodeUpdate):
     """更新知识库节点"""
     from docs_core import knowledge_service
+    import logging
+    
+    # 获取原始节点
     current_node = knowledge_service.get_node(node_id)
     if not current_node:
-        raise HTTPException(status_code=404, detail="Node not found")
+        raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+        
     kwargs = {}
-    if title is not None:
-        kwargs['title'] = title
-    if parent_id is not None:
-        normalized_parent_id = None if parent_id == '' else parent_id
+    if request.title is not None:
+        kwargs['title'] = request.title
+        
+    if request.parent_id is not None:
+        parent_id = request.parent_id
+        # 统一处理根节点标识
+        # 前端可能传 '', 'undefined', '__root__', 'null' 等
+        if not parent_id or parent_id in ['', 'undefined', '__root__', 'null', 'None']:
+            normalized_parent_id = None
+        else:
+            normalized_parent_id = parent_id
+            
+        # 校验新父节点
         if normalized_parent_id:
             parent_node = knowledge_service.get_node(normalized_parent_id)
             if not parent_node:
-                raise HTTPException(status_code=400, detail="Parent node not found")
+                raise HTTPException(status_code=400, detail=f"Parent node {normalized_parent_id} not found")
             if parent_node.type != 'folder':
-                raise HTTPException(status_code=400, detail="Parent node must be folder")
+                raise HTTPException(status_code=400, detail="Parent node must be a folder")
             if normalized_parent_id == node_id:
                 raise HTTPException(status_code=400, detail="Node cannot be its own parent")
+                
+            # 循环移动校验
             parent_map = {node.id: node.parent_id for node in knowledge_service.nodes}
-            current_parent_id = normalized_parent_id
-            while current_parent_id:
-                if current_parent_id == node_id:
-                    raise HTTPException(status_code=400, detail="Cannot move node into its descendant")
-                current_parent_id = parent_map.get(current_parent_id)
+            curr = normalized_parent_id
+            visited = {node_id}
+            while curr:
+                if curr in visited:
+                    raise HTTPException(status_code=400, detail="Cannot move node into its own descendant (circular move)")
+                visited.add(curr)
+                curr = parent_map.get(curr)
+        
         kwargs['parent_id'] = normalized_parent_id
-    if visible is not None:
-        kwargs['visible'] = visible
-    if sort_order is not None:
-        kwargs['sort_order'] = max(0, sort_order)
-    node = knowledge_service.update_node(node_id, **kwargs)
-    return node
+        
+    if request.visible is not None:
+        kwargs['visible'] = request.visible
+        
+    if request.sort_order is not None:
+        kwargs['sort_order'] = max(0, int(request.sort_order))
+        
+    try:
+        node = knowledge_service.update_node(node_id, **kwargs)
+        return node
+    except Exception as e:
+        logging.error(f"Failed to update node {node_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
 
 @app.delete("/api/knowledge/nodes/{node_id}")
 def delete_knowledge_node(node_id: str):
@@ -1270,56 +1256,56 @@ async def upload_document(
         "node": node
     }
 
-@app.post("/api/knowledge/parse")
-def parse_document(library_id: str, doc_id: str, file_path: Optional[str] = None):
-    """解析文档"""
-    from docs_core import knowledge_service
-    node = knowledge_service.get_node(doc_id)
-    if not node:
-        raise HTTPException(status_code=404, detail="Document not found")
-    from docs_core import file_storage
-    target_file_path = file_path or node.file_path or file_storage.get_latest_source_file(library_id, doc_id)
-    target_file_path = file_storage.ensure_doc_source_file(library_id, doc_id, target_file_path)
-    if not target_file_path:
-        raise HTTPException(status_code=400, detail="file_path is required")
-    task_id = f"task-{uuid.uuid4().hex[:12]}"
-    knowledge_service.create_parse_task(task_id, library_id, doc_id)
-    knowledge_service.update_node(
-        doc_id,
-        status='processing',
-        parse_progress=0,
-        parse_stage='queued',
-        parse_error=None,
-        parse_task_id=task_id
-    )
-    worker = threading.Thread(
-        target=_run_parse_task,
-        args=(task_id, library_id, doc_id, target_file_path),
-        daemon=True
-    )
-    parse_worker_threads[task_id] = worker
-    worker.start()
-    return {
-        "status": "accepted",
-        "task_id": task_id,
-        "doc_id": doc_id,
-        "file_path": target_file_path,
-        "storage": file_storage.get_doc_manifest(library_id, doc_id)
-    }
-
 
 @app.get("/api/files")
 def get_file_for_preview(path: str):
     """按绝对路径预览文件"""
     normalized_path = os.path.abspath(os.path.normpath(path))
-    allowed_root = os.path.abspath(os.path.join(ROOT_DIR, 'data', 'knowledge_base'))
-    if os.path.commonpath([normalized_path, allowed_root]) != allowed_root:
+    # 允许访问的根目录
+    allowed_roots = [
+        os.path.abspath(os.path.join(ROOT_DIR, 'data', 'knowledge_base')),
+        # 兼容 Windows 驱动器盘符大小写和不同根路径
+    ]
+    
+    # 额外添加当前文件存储可能使用的根路径
+    from docs_core import file_storage
+    storage_root = os.path.abspath(file_storage.base_dir)
+    if storage_root not in allowed_roots:
+        allowed_roots.append(storage_root)
+
+    is_allowed = False
+    for root in allowed_roots:
+        try:
+            # 使用 commonpath 检查 path 是否在 root 目录下
+            if os.path.commonpath([normalized_path, root]).lower() == root.lower():
+                is_allowed = True
+                break
+        except ValueError:
+            # 路径在不同驱动器上时 commonpath 会抛出 ValueError
+            continue
+            
+    if not is_allowed:
+        # 记录日志以便排查
+        print(f"[Preview Error] Forbidden path: {normalized_path}")
+        print(f"[Preview Error] Allowed roots: {allowed_roots}")
         raise HTTPException(status_code=403, detail="Forbidden path")
+        
     if not os.path.exists(normalized_path):
         raise HTTPException(status_code=404, detail="File not found")
     if not os.path.isfile(normalized_path):
         raise HTTPException(status_code=400, detail="Path is not a file")
-    return FileResponse(normalized_path)
+            
+    filename = os.path.basename(normalized_path)
+    # 使用 URL 编码的文件名以避免中文乱码问题
+    encoded_filename = quote(filename)
+    
+    return FileResponse(
+        normalized_path, 
+        filename=filename,
+        headers={
+            "Content-Disposition": f"inline; filename*=utf-8''{encoded_filename}"
+        }
+    )
 
 
 @app.get("/api/knowledge/parse/tasks/{task_id}")
@@ -1343,9 +1329,10 @@ def get_doc_strategy(doc_id: str):
 
 
 @app.put("/api/knowledge/strategies/{doc_id}")
-def set_doc_strategy(doc_id: str, strategy: str):
+def set_doc_strategy(doc_id: str, request: KnowledgeStrategyUpdate):
     """设置文档策略"""
     from docs_core import knowledge_service
+    strategy = request.strategy
     allowed = {'A_structured', 'B_mineru_rag', 'C_pageindex'}
     if strategy not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported strategy")
@@ -1356,9 +1343,12 @@ def set_doc_strategy(doc_id: str, strategy: str):
 
 
 @app.post("/api/knowledge/structured/index")
-def build_structured_index(library_id: str, doc_id: str, strategy: str = 'A_structured'):
+def build_structured_index(request: KnowledgeStructuredIndexRequest):
     """构建结构化索引"""
     from docs_core import knowledge_service
+    doc_id = request.doc_id
+    library_id = request.library_id
+    strategy = request.strategy or 'A_structured'
     node = knowledge_service.get_node(doc_id)
     if not node:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1413,10 +1403,15 @@ def get_structured_stats(doc_id: str):
 
 
 @app.post("/api/knowledge/rag/query")
-def rag_query(question: str, library_id: str = 'default', k: int = 4, use_llm: bool = True):
+def rag_query(request: KnowledgeRagQueryRequest):
     """RAG 查询 - 使用 angineer-core LLM 客户端"""
     from docs_core import mineru_rag
     from angineer_core.infra.llm_client import LLMClient
+    
+    question = request.question
+    library_id = request.library_id or 'default'
+    k = request.k or 4
+    use_llm = request.use_llm if request.use_llm is not None else True
     
     # 先检索相关知识
     rag_result = mineru_rag.query(question, k, library_id)
@@ -1467,10 +1462,13 @@ def rag_query(question: str, library_id: str = 'default', k: int = 4, use_llm: b
         }
 
 @app.post("/api/knowledge/rag/build")
-def rag_build(library_id: str, doc_ids: list):
+def rag_build(request: KnowledgeRagBuildRequest):
     """构建知识库"""
     from docs_core import mineru_rag, file_storage
     import glob
+    
+    library_id = request.library_id
+    doc_ids = request.doc_ids
     
     md_files = []
     for doc_id in doc_ids:
@@ -1490,19 +1488,58 @@ def rag_build(library_id: str, doc_ids: list):
 @app.get("/api/knowledge/document/{library_id}/{doc_id}")
 def get_document(library_id: str, doc_id: str):
     """获取文档内容"""
-    from docs_core import file_storage, mineru_parser
+    from docs_core import file_storage
+    from docs_core.parser.mineru_structure import MinerUStructureBuilder
+    from pathlib import Path
+    import json
+    import os
+
     content = file_storage.read_markdown(library_id, doc_id)
     if content is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    
     storage_manifest = file_storage.get_doc_manifest(library_id, doc_id)
     mineru_blocks = file_storage.read_mineru_blocks(library_id, doc_id)
+    
     if not mineru_blocks:
-        raw_dir = storage_manifest.get('raw_dir')
-        if isinstance(raw_dir, str) and raw_dir.strip():
-            recovered_blocks = mineru_parser.recover_blocks_from_raw_dir(raw_dir)
-            if recovered_blocks:
-                file_storage.save_mineru_blocks(library_id, doc_id, recovered_blocks)
-                mineru_blocks = recovered_blocks
+        # 尝试从 raw_dir 恢复 blocks
+        raw_dir = storage_manifest.get('raw_dir') or storage_manifest.get('parsed_dir')
+        if isinstance(raw_dir, str) and raw_dir.strip() and os.path.isdir(raw_dir):
+            try:
+                structure_builder = MinerUStructureBuilder()
+                model_data = None
+                layout_data = None
+                content_list_data = None
+                
+                def _read_json_safe(p):
+                    try:
+                        with open(p, 'r', encoding='utf-8') as f:
+                            return json.load(f)
+                    except:
+                        return None
+
+                json_files = list(Path(raw_dir).rglob('*.json'))
+                for f in json_files:
+                    fname = f.name.lower()
+                    if fname.endswith('model.json'):
+                        model_data = _read_json_safe(f)
+                    elif fname.endswith('layout.json'):
+                        layout_data = _read_json_safe(f)
+                    elif 'content_list' in fname:
+                        content_list_data = _read_json_safe(f)
+                
+                recovered_blocks = structure_builder.build(
+                    model_data=model_data,
+                    layout_data=layout_data,
+                    content_list_data=content_list_data
+                )
+                
+                if recovered_blocks:
+                    file_storage.save_mineru_blocks(library_id, doc_id, recovered_blocks)
+                    mineru_blocks = recovered_blocks
+            except Exception as e:
+                print(f"[GetDocument] Recover blocks failed: {e}")
+
     return {
         "content": content,
         "storage": storage_manifest,
@@ -1510,9 +1547,10 @@ def get_document(library_id: str, doc_id: str):
     }
 
 @app.put("/api/knowledge/document/{library_id}/{doc_id}")
-def update_document(library_id: str, doc_id: str, content: str):
+def update_document(library_id: str, doc_id: str, request: KnowledgeDocumentUpdate):
     """更新文档内容"""
     from docs_core import file_storage, knowledge_service
+    content = request.content
     saved_path = file_storage.save_edited_markdown(library_id, doc_id, content)
     knowledge_service.update_node(doc_id, updated_at=datetime.now())
     return {"status": "success", "path": saved_path, "storage": file_storage.get_doc_manifest(library_id, doc_id)}

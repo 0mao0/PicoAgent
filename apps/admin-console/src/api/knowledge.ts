@@ -46,7 +46,7 @@ export const knowledgeApi = {
   // 知识库
   getLibraries: () => api.get('/knowledge/libraries'),
   createLibrary: (name: string, description: string) => 
-    api.post('/knowledge/libraries', null, { params: { name, description } }),
+    api.post('/knowledge/libraries', { library_id: 'default', name, description }),
   getLibrary: (libraryId: string) => api.get(`/knowledge/libraries/${libraryId}`),
 
   // 节点
@@ -58,34 +58,26 @@ export const knowledgeApi = {
     library_id?: string
     parent_id?: string
     visible?: boolean
-  }) => api.post('/knowledge/nodes', null, { params: data }),
-  updateNode: (nodeId: string, data: Record<string, any>) => {
-    const params = new URLSearchParams()
-    Object.entries(data).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        params.append(key, String(value))
-      } else if (value === null) {
-        params.append(key, '')
-      }
-    })
-    return api.patch(`/knowledge/nodes/${nodeId}?${params.toString()}`)
-  },
+    sort_order?: number
+  }) => api.post('/knowledge/nodes', data),
+  updateNode: (nodeId: string, data: Record<string, any>) => 
+    api.patch(`/knowledge/nodes/${nodeId}`, data),
   deleteNode: (nodeId: string) => api.delete(`/knowledge/nodes/${nodeId}`),
 
   // 文档解析
   parseDocument: (libraryId: string, docId: string, filePath?: string) => 
-    api.post('/knowledge/parse', null, { params: { library_id: libraryId, doc_id: docId, file_path: filePath } }),
+    api.post('/knowledge/parse', { library_id: libraryId, doc_id: docId, file_path: filePath }),
   parseDocumentAsync: (libraryId: string, docId: string, filePath?: string) =>
-    api.post('/knowledge/parse', null, { params: { library_id: libraryId, doc_id: docId, file_path: filePath } }),
+    api.post('/knowledge/parse', { library_id: libraryId, doc_id: docId, file_path: filePath }),
   getParseTask: (taskId: string) =>
     api.get(`/knowledge/parse/tasks/${taskId}`) as Promise<ParseTaskInfo>,
 
   // 策略
   getDocStrategy: (docId: string) => api.get(`/knowledge/strategies/${docId}`),
   setDocStrategy: (docId: string, strategy: KnowledgeStrategy) =>
-    api.put(`/knowledge/strategies/${docId}`, null, { params: { strategy } }),
+    api.put(`/knowledge/strategies/${docId}`, { strategy }),
   buildStructuredIndex: (libraryId: string, docId: string, strategy: KnowledgeStrategy) =>
-    api.post('/knowledge/structured/index', null, { params: { library_id: libraryId, doc_id: docId, strategy } }),
+    api.post('/knowledge/structured/index', { library_id: libraryId, doc_id: docId, strategy }),
   getStructuredIndex: (
     docId: string,
     strategy: KnowledgeStrategy,
@@ -107,15 +99,15 @@ export const knowledgeApi = {
 
   // RAG
   ragQuery: (question: string, libraryId: string = 'default', k: number = 4, useLlm: boolean = true) => 
-    api.post('/knowledge/rag/query', null, { params: { question, library_id: libraryId, k, use_llm: useLlm } }),
+    api.post('/knowledge/rag/query', { question, library_id: libraryId, k, use_llm: useLlm }),
   ragBuild: (libraryId: string, docIds: string[]) => 
-    api.post('/knowledge/rag/build', null, { params: { library_id: libraryId, doc_ids: docIds } }),
+    api.post('/knowledge/rag/build', { library_id: libraryId, doc_ids: docIds }),
 
   // 文档内容
   getDocument: (libraryId: string, docId: string) => 
     api.get(`/knowledge/document/${libraryId}/${docId}`) as Promise<DocumentResponse>,
   updateDocument: (libraryId: string, docId: string, content: string) => 
-    api.put(`/knowledge/document/${libraryId}/${docId}`, null, { params: { content } }),
+    api.put(`/knowledge/document/${libraryId}/${docId}`, { content }),
   getDocumentStorage: (libraryId: string, docId: string) =>
     api.get(`/knowledge/storage/${libraryId}/${docId}`) as Promise<{
       library_id: string

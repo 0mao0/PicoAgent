@@ -1,103 +1,43 @@
-# AnGIneer Startup Script
+# AnGIneer Startup Script (Simplified)
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-function Write-Header($text) {
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "   $text" -ForegroundColor Cyan
-    Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "   AnGIneer Simplified Startup" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+
+# 1. 检查基础环境
+Write-Host "[1/3] 检查 Node.js & Python..." -ForegroundColor Yellow
+$nodeVer = node --version 2>$null
+if (-not $nodeVer) { Write-Error "Node.js not found!"; exit 1 }
+$pythonVer = python --version 2>$null
+if (-not $pythonVer) { Write-Error "Python not found!"; exit 1 }
+
+# 2. 安装依赖 (仅在 node_modules 不存在时强制安装，否则手动更新)
+if (-not (Test-Path "node_modules")) {
+    Write-Host "[2/3] 安装依赖 (首次启动)..." -ForegroundColor Yellow
+    pnpm install
+} else {
+    Write-Host "[2/3] 跳过依赖安装 (已有 node_modules)，如有问题请手动 pnpm install" -ForegroundColor Green
 }
 
-function Write-Step($num, $total, $text) {
-    Write-Host ""
-    Write-Host "[$num/$total] $text..." -ForegroundColor Yellow
-}
-
-Write-Header "AnGIneer Startup"
-
-# Check Node.js
-Write-Step 1 4 "Check Node.js"
-$nodePath = Get-Command node -ErrorAction SilentlyContinue
-if (-not $nodePath) {
-    $possiblePaths = @(
-        "C:\Program Files\nodejs\node.exe",
-        "C:\Program Files (x86)\nodejs\node.exe",
-        "$env:LOCALAPPDATA\nvs\current\node.exe"
-    )
-    foreach ($path in $possiblePaths) {
-        if (Test-Path $path) {
-            $env:PATH = "$([System.IO.Path]::GetDirectoryName($path));$env:PATH"
-            break
-        }
-    }
-}
-
-try {
-    $nodeVer = node --version 2>$null
-    if (-not $nodeVer) { throw }
-    Write-Host "        Node.js OK: $nodeVer" -ForegroundColor Green
-} catch {
-    Write-Host "[Error] Node.js not found" -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
-}
-
-# Check pnpm
-Write-Step 2 4 "Check pnpm"
-try {
-    $pnpmVer = pnpm --version 2>$null
-    if (-not $pnpmVer) { throw }
-    Write-Host "        pnpm OK" -ForegroundColor Green
-} catch {
-    Write-Host "[Warn] Installing pnpm..." -ForegroundColor Yellow
-    npm install -g pnpm
-}
-
-# Check Python
-Write-Step 3 4 "Check Python"
-try {
-    $pythonVer = python --version 2>$null
-    if (-not $pythonVer) { throw }
-    Write-Host "        Python OK" -ForegroundColor Green
-} catch {
-    Write-Host "[Warn] Python not found" -ForegroundColor Yellow
-}
-
-# Install dependencies
-Write-Header "Install Dependencies"
-
-Write-Host ""
-Write-Host "Installing frontend deps..." -ForegroundColor Yellow
-pnpm install
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[Error] Frontend install failed" -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
-}
-
-Write-Host ""
-Write-Host "Installing Python deps..." -ForegroundColor Yellow
-pip install -e services/angineer-core/src -e services/sop-core/src -e services/docs-core/src -e services/geo-core/src -e services/engtools/src
-
-# Start services
-Write-Header "Start Services"
-Write-Host ""
-Write-Host "Frontend: http://localhost:3005" -ForegroundColor Green
-Write-Host "Admin:    http://localhost:3002" -ForegroundColor Green
-Write-Host "Backend:  http://localhost:8033" -ForegroundColor Green
-Write-Host ""
+# 3. 启动所有服务
+Write-Host "[3/3] 启动后端, Admin 和 Frontend..." -ForegroundColor Yellow
+Write-Host "      Backend:  http://localhost:8033" -ForegroundColor Green
+Write-Host "      Admin:    http://localhost:3002" -ForegroundColor Green
+Write-Host "      Frontend: http://localhost:3005" -ForegroundColor Green
 
 $rootDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 
-# Start backend
-Start-Process cmd -ArgumentList "/k cd /d `"$rootDir`" && title AnGIneer Backend && python apps/api-server/main.py"
+# 后端 (独立窗口)
+Start-Process cmd -ArgumentList "/k cd /d `"$rootDir`" && title AnGIneer Backend && pnpm dev:backend"
 
-# Start admin
+# Admin (独立窗口)
 Start-Process cmd -ArgumentList "/k cd /d `"$rootDir`" && title AnGIneer Admin && pnpm dev:admin"
 
-# Wait
-Start-Sleep -Seconds 3
+# 等待后端启动
+Write-Host ""
+Write-Host "等待后端服务启动 (10秒)..." -ForegroundColor Yellow
+Start-Sleep -Seconds 5
 
-# Start frontend (blocking)
+# Frontend (当前窗口)
 pnpm dev:frontend
-
-Read-Host "Press Enter to exit"
