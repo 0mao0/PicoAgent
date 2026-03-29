@@ -23,7 +23,6 @@ class FileStorage:
     def _ensure_dirs(self):
         """确保目录存在"""
         self.libraries_dir.mkdir(parents=True, exist_ok=True)
-        self._reorganize_once()
 
     def _library_root(self, library_id: str) -> Path:
         library_root = self.libraries_dir / library_id
@@ -48,6 +47,10 @@ class FileStorage:
         parsed_dir.mkdir(parents=True, exist_ok=True)
         return parsed_dir
 
+    def get_graph_path(self, library_id: str, doc_id: str) -> Path:
+        """获取结构图谱文件路径。"""
+        return self.get_parsed_dir(library_id, doc_id) / 'doc_blocks_graph.json'
+
     def get_edited_dir(self, library_id: str, doc_id: str) -> Path:
         """获取编辑目录"""
         edited_dir = self.get_doc_root(library_id, doc_id) / 'edited'
@@ -57,6 +60,12 @@ class FileStorage:
     def get_raw_dir(self, library_id: str, doc_id: str) -> Path:
         """获取解析原始返回目录。"""
         raw_dir = self.get_parsed_dir(library_id, doc_id) / 'raw'
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        return raw_dir
+
+    def get_mineru_raw_dir(self, library_id: str, doc_id: str) -> Path:
+        """获取 MinerU 原始结构目录。"""
+        raw_dir = self.get_parsed_dir(library_id, doc_id) / 'mineru_raw'
         raw_dir.mkdir(parents=True, exist_ok=True)
         return raw_dir
 
@@ -124,8 +133,7 @@ class FileStorage:
         shutil.copytree(output_dir, parsed_dir, dirs_exist_ok=True)
 
         # 2. 准备 mineru_raw 目录用于存放关键 JSON
-        mineru_raw_dir = parsed_dir / 'mineru_raw'
-        mineru_raw_dir.mkdir(parents=True, exist_ok=True)
+        mineru_raw_dir = self.get_mineru_raw_dir(library_id, doc_id)
         
         # 3. 清理 PDF 文件 (如 origin.pdf)
         for pdf_file in list(parsed_dir.rglob('*.pdf')):
@@ -192,16 +200,16 @@ class FileStorage:
             raw_path.mkdir(parents=True, exist_ok=True)
         return str(raw_path)
 
+    def resolve_canonical_raw_dir(self, library_id: str, doc_id: str) -> Path:
+        """解析结构主链应优先读取的原始目录。"""
+        mineru_raw_dir = self.get_parsed_dir(library_id, doc_id) / 'mineru_raw'
+        if mineru_raw_dir.exists():
+            return mineru_raw_dir
+        return self.get_parsed_dir(library_id, doc_id)
+
     def get_mineru_blocks_path(self, library_id: str, doc_id: str) -> Path:
         """获取 MinerU 块级结果路径"""
         return self.get_parsed_dir(library_id, doc_id) / 'mineru_blocks.json'
-
-    def _legacy_mineru_blocks_paths(self, library_id: str, doc_id: str) -> List[Path]:
-        parsed_dir = self.get_parsed_dir(library_id, doc_id)
-        return [
-            parsed_dir / 'block_data.json',
-            parsed_dir / 'blocks.json'
-        ]
 
     def save_mineru_blocks(self, library_id: str, doc_id: str, blocks: List[Dict[str, Any]]) -> str:
         """保存 MinerU 块级结果"""
@@ -221,17 +229,16 @@ class FileStorage:
 
     def read_mineru_blocks(self, library_id: str, doc_id: str) -> List[Dict[str, Any]]:
         """读取 MinerU 块级结果"""
-        candidate_paths = [self.get_mineru_blocks_path(library_id, doc_id), *self._legacy_mineru_blocks_paths(library_id, doc_id)]
-        for blocks_path in candidate_paths:
-            if not blocks_path.exists():
-                continue
-            try:
-                with open(blocks_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                if isinstance(data, list):
-                    return [item for item in data if isinstance(item, dict)]
-            except Exception:
-                continue
+        blocks_path = self.get_mineru_blocks_path(library_id, doc_id)
+        if not blocks_path.exists():
+            return []
+        try:
+            with open(blocks_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+        except Exception:
+            return []
         return []
 
     def read_markdown(self, library_id: str, doc_id: str) -> Optional[str]:
@@ -316,11 +323,6 @@ class FileStorage:
         raw_dir = self.get_parsed_dir(library_id, doc_id) / 'raw'
         middle_json_path = self.get_middle_json_path(library_id, doc_id)
         mineru_blocks_path = self.get_mineru_blocks_path(library_id, doc_id)
-        if not mineru_blocks_path.exists():
-            for candidate in self._legacy_mineru_blocks_paths(library_id, doc_id):
-                if candidate.exists():
-                    mineru_blocks_path = candidate
-                    break
         history_dir = self.get_edited_dir(library_id, doc_id) / 'history'
         return {
             'doc_root': str(doc_root),
@@ -341,62 +343,16 @@ class FileStorage:
         for library_root in self.libraries_dir.glob('*'):
             if not library_root.is_dir():
                 continue
-            old_docs_dir = library_root / 'docs'
             documents_dir = library_root / 'documents'
             documents_dir.mkdir(parents=True, exist_ok=True)
-            if old_docs_dir.exists() and old_docs_dir.is_dir():
-                for old_doc_root in old_docs_dir.iterdir():
-                    if not old_doc_root.is_dir():
-                        continue
-                    new_doc_root = documents_dir / old_doc_root.name
-                    if not new_doc_root.exists():
-                        shutil.move(str(old_doc_root), str(new_doc_root))
-                    else:
-                        self._merge_doc_dir(old_doc_root, new_doc_root)
-                if not any(old_docs_dir.iterdir()):
-                    old_docs_dir.rmdir()
             for doc_root in documents_dir.iterdir():
                 if not doc_root.is_dir():
                     continue
                 self._normalize_doc_layout(doc_root)
-        self._cleanup_legacy_root_dirs()
-
-    def _merge_doc_dir(self, source_dir: Path, target_dir: Path) -> None:
-        for item in source_dir.iterdir():
-            target = target_dir / item.name
-            if target.exists():
-                if item.is_dir():
-                    self._merge_doc_dir(item, target)
-                else:
-                    item.unlink()
-            else:
-                shutil.move(str(item), str(target))
-        if source_dir.exists() and not any(source_dir.iterdir()):
-            source_dir.rmdir()
 
     def _normalize_doc_layout(self, doc_root: Path) -> None:
-        parsed_dir = doc_root / 'parsed'
-        if parsed_dir.exists():
-            old_parsed = parsed_dir / 'full.md'
-            new_parsed = parsed_dir / 'content.md'
-            if old_parsed.exists() and not new_parsed.exists():
-                shutil.move(str(old_parsed), str(new_parsed))
-        edited_dir = doc_root / 'edited'
-        if edited_dir.exists():
-            old_revisions = edited_dir / 'revisions'
-            new_history = edited_dir / 'history'
-            if old_revisions.exists() and not new_history.exists():
-                shutil.move(str(old_revisions), str(new_history))
-            elif old_revisions.exists() and new_history.exists():
-                self._merge_doc_dir(old_revisions, new_history)
-        for child in ('source', 'parsed', 'edited'):
+        for child in ('source', 'parsed', 'edited', 'structured'):
             (doc_root / child).mkdir(parents=True, exist_ok=True)
-
-    def _cleanup_legacy_root_dirs(self) -> None:
-        for legacy_name in ('source', 'markdown', 'pics'):
-            legacy_dir = self.base_dir / legacy_name
-            if legacy_dir.exists() and legacy_dir.is_dir() and not any(legacy_dir.iterdir()):
-                legacy_dir.rmdir()
 
 
 file_storage = FileStorage()

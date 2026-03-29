@@ -226,7 +226,7 @@ flowchart TD
 ### 3. 后端核心注意事项
 
 #### 存储规范（一文档一目录）
-所有文档产物必须存放在：`data/knowledge_base/libraries/{lib_id}/docs/{doc_id}/`
+所有文档产物必须存放在：`data/knowledge_base/libraries/{lib_id}/documents/{doc_id}/`
 - `source/`: 原始文件。
 - `parsed/`: `content.md`, `mineru_blocks.json`, `assets/` (图片/表格截图)。
 - `structured/`: 经过 A/B/C 策略处理后的结构化索引。
@@ -336,13 +336,15 @@ flowchart TB
   - 新增 `/api/knowledge/strategies/*`（文档策略设置、按策略检索）。
   - 新增 `/api/knowledge/document/{library_id}/{doc_id}/revisions`。
   - 新增 `/api/knowledge/document/{library_id}/{doc_id}/structured`（统一结构化输出）。
-  - 三策略构建逻辑分发到 `services/docs-core/src/docs_core/storage/structured_strategy.py`、`mineru_rag_strategy.py`、`pageindex_strategy.py`。
+  - 三策略构建逻辑分发到 `services/docs-core/src/docs_core/api/parse_api.py`，具体实现下沉到 `structured_strategy.py`、`mineru_rag_strategy.py`、`pageindex_strategy.py`。
+- `services/docs-core/src/docs_core/api/parse_service.py`
+  - 统一解析主链编排：任务创建、阶段推进、MinerU 调用、产物落盘、A 主链索引构建。
 - `services/docs-core/src/docs_core/parser/mineru_parser.py`
   - 保留 MinerU 解析能力，补充任务阶段回调（若 SDK 无实时进度则用阶段进度）。
   - 增加解析产物清单返回（md、assets、metadata）。
 - `services/docs-core/src/docs_core/storage/file_storage.py`
   - 改造为“一文档一目录”结构。
-  - 新增路径方法：`get_doc_root`、`save_source_file_with_name`、`save_assets`、`save_revision`。
+  - 新增路径方法：`get_doc_root`、`get_graph_path`、`get_mineru_raw_dir`、`resolve_canonical_raw_dir`、`save_revision`。
   - 提供旧路径兼容读取逻辑（迁移期间双读）。
 - `services/engtools/src/engtools/config.py`
   - 增加目录解析策略：优先新目录结构，回退旧 `knowledge_base/markdown`。
@@ -354,6 +356,7 @@ flowchart TB
 ### 3）数据表（按文件级）
 
 - `services/docs-core/src/docs_core/api/knowledge_api.py`
+  - 作为服务门面，内部拆分为 `KnowledgeMetaStore` 与 `KnowledgeIndexStore`。
   - 现有 `nodes` 表增加字段：
     - `parse_progress INTEGER`
     - `parse_stage TEXT`
@@ -367,6 +370,7 @@ flowchart TB
   - 新增 `document_tables`、`document_images` 表：表格与图片结构化索引。
   - 新增 `document_revisions` 表：编辑版本与 diff 摘要。
   - 新增 `strategy_eval_logs` 表：A/B/C 三策略效果评测记录。
+  - `document_segments` 与 `doc_blocks` 统一收口到 `knowledge_index.sqlite`。
 
 ### 4）迁移脚本（按文件级）
 
@@ -758,7 +762,7 @@ const onDropRoot = async (dragNodeKey: string) => {
 ### 持久化与数据库
 
 - 知识树服务已使用 SQLite 持久化，见 [knowledge_api.py](file:///d:/AI/AnGIneer/services/docs-core/src/docs_core/api/knowledge_api.py)。
-- 默认数据库文件：`data/knowledge.sqlite3`。
+- 默认数据库文件已拆分为：`data/knowledge_base/knowledge_meta.sqlite` 与 `data/knowledge_base/knowledge_index.sqlite`。
 - `nodes` 表含 `sort_order` 字段，支持同级顺序持久化与重排。
 - 建议使用“整体后端统一数据库”，不建议为 SmartTree 单独建独立数据库。
 

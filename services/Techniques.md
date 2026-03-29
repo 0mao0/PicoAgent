@@ -45,7 +45,7 @@ sequenceDiagram
 ### 2. 后端核心注意事项
 
 #### 存储层 (FileStorage)
-- **绝对隔离**：严格遵循 `data/knowledge_base/libraries/{lib_id}/docs/{doc_id}/` 规范，每个文档拥有独立的根目录，避免产物混叠。
+- **绝对隔离**：严格遵循 `data/knowledge_base/libraries/{lib_id}/documents/{doc_id}/` 规范，每个文档拥有独立的根目录，避免产物混叠。
 - **产物持久化**：
   - `parsed/content.md`: 标准化后的 Markdown 全文。
   - `parsed/mineru_blocks.json`: 包含 `bbox` 和 `page_idx` 的原子块信息。
@@ -78,10 +78,11 @@ flowchart TB
   end
 
   subgraph DocsCore["docs-core 知识引擎层"]
-    KService["knowledge_service\n节点与任务状态"]
+    KService["knowledge_service\n节点/任务元数据门面"]
+    Orchestrator["parse_service\n解析编排与状态推进"]
     Parser["mineru_parser\n高保真解析"]
-    Storage["file_storage\n一文档一目录"]
-    Struct["structured_indexer\n条文/表格/图片结构化"]
+    Storage["file_storage\n一文档一目录与兼容路径"]
+    Struct["structured_strategy\nA 主链 canonical structure"]
   end
 
   subgraph Strategy["检索执行平面"]
@@ -91,8 +92,9 @@ flowchart TB
   end
 
   subgraph DB["数据与工件层"]
-    Sqlite["data/knowledge.sqlite3\nnodes/tasks/artifacts/segments/revisions/eval_logs"]
-    KB["data/knowledge_base/libraries/{library_id}/docs/{doc_id}\nsource/parsed/edited/structured"]
+    MetaSqlite["data/knowledge_base/knowledge_meta.sqlite\nlibraries/nodes/tasks/artifacts/revisions/eval_logs"]
+    IndexSqlite["data/knowledge_base/knowledge_index.sqlite\ndoc_blocks/document_segments"]
+    KB["data/knowledge_base/libraries/{library_id}/documents/{doc_id}\nsource/parsed/edited/structured"]
   end
 
   subgraph Tools["engtools 工具层"]
@@ -101,7 +103,8 @@ flowchart TB
   end
 
   ParseAPI --> KService
-  ParseAPI --> Parser
+  ParseAPI --> Orchestrator
+  Orchestrator --> Parser
   Parser --> Storage
   Storage --> KB
   TaskAPI --> KService
@@ -110,12 +113,12 @@ flowchart TB
   StrategyAPI --> B
   StrategyAPI --> C
   A --> Struct
-  Struct --> Sqlite
-  B --> Sqlite
-  C --> Sqlite
-  KService --> Sqlite
-  KTool --> Sqlite
-  TTool --> Sqlite
+  Struct --> IndexSqlite
+  B --> IndexSqlite
+  C --> IndexSqlite
+  KService --> MetaSqlite
+  KTool --> IndexSqlite
+  TTool --> IndexSqlite
   KTool --> KB
   TTool --> KB
 ```
@@ -128,7 +131,7 @@ flowchart TB
 flowchart TB
   subgraph Ingest["解析入口 apps/api-server/main.py"]
     ParseReq["POST /api/knowledge/parse\n提交解析任务"]
-    ParseTask["_run_parse_task\n执行 MinerU 解析与落盘"]
+    ParseTask["parse_service.ParseOrchestrator\n执行解析主链与状态推进"]
   end
 
   subgraph Parser["解析核心 services/docs-core/parser/mineru_parser.py"]
@@ -139,9 +142,9 @@ flowchart TB
   end
 
   subgraph Storage["存储层 services/docs-core/storage/file_storage.py"]
-    SaveMd["save_parsed_markdown\n写入 parsed/content.md"]
-    SaveBlocks["save_mineru_blocks\n写入 parsed/mineru_blocks.json"]
-    KeepAssets["保留 raw/cloud_result/images\n用于前端图片展示"]
+    SaveMd["save_markdown\n写入 parsed/content.md"]
+    SaveArtifacts["save_parse_artifacts\n写入 parsed/mineru_raw + assets"]
+    KeepAssets["保留解析原始工件\n用于前端图片展示与重建"]
   end
 
   subgraph ReadApi["读取入口 apps/api-server/main.py"]
@@ -161,12 +164,12 @@ flowchart TB
   ExtractZip --> BuildFinal
   BuildFinal --> RecoverBlocks
   RecoverBlocks --> SaveMd
-  RecoverBlocks --> SaveBlocks
+  RecoverBlocks --> SaveArtifacts
   RecoverBlocks --> KeepAssets
 
   SaveMd --> GetDoc
-  SaveBlocks --> GetDoc
-  SaveBlocks --> GetStructured
+  SaveArtifacts --> GetDoc
+  SaveArtifacts --> GetStructured
   KeepAssets --> GetDoc
 
   GetDoc --> PageFields
@@ -182,12 +185,14 @@ flowchart TB
 ## 一文档一目录规范
 
 ```text
-data/knowledge_base/libraries/{library_id}/docs/{doc_id}/
+data/knowledge_base/libraries/{library_id}/documents/{doc_id}/
 ├─ source/
 │  └─ {original_filename}
 ├─ parsed/
-│  ├─ full.md
-│  └─ assets/
+│  ├─ content.md
+│  ├─ mineru_raw/
+│  ├─ assets/
+│  └─ doc_blocks_graph.json
 ├─ edited/
 │  ├─ current.md
 │  └─ revisions/{timestamp}.md
@@ -206,15 +211,15 @@ data/knowledge_base/libraries/{library_id}/docs/{doc_id}/
   - 增加任务进度查询、文档版本、策略切换与统一查询接口。
   - 三策略索引构建改为路由分发，实际实现下沉到 `docs_core.storage.*_strategy`。
 - `services/docs-core/src/docs_core/storage/structured_strategy.py`
-  - A 策略结构化索引提取与入库实现。
+  - A 策略主链：统一生成 canonical structure，并写入 `knowledge_index.sqlite`。
 - `services/docs-core/src/docs_core/storage/mineru_rag_strategy.py`
-  - B 策略（MinerU-RAG）索引构建与向量能力接入实现。
+  - B 策略（MinerU-RAG）只消费 A 主链 `document_segments`，不再平行解析 Markdown。
 - `services/docs-core/src/docs_core/storage/pageindex_strategy.py`
-  - C 策略（PageIndex）索引构建实现。
+  - C 策略（PageIndex）只消费 A 主链 `doc_blocks`，生成分页投影。
 - `services/docs-core/src/docs_core/api/knowledge_api.py`
-  - 扩展 `nodes` 字段，新增 `parse_tasks`、`document_artifacts`、`document_segments`、`document_tables`、`document_images`、`document_revisions`、`strategy_eval_logs` 表。
+  - 作为元数据门面，持有 `KnowledgeMetaStore` 与 `KnowledgeIndexStore` 双库访问。
 - `services/docs-core/src/docs_core/storage/file_storage.py`
-  - 实现一文档一目录读写 API，保留旧路径兼容读取。
+  - 实现一文档一目录读写 API，并统一 canonical raw path 解析。
 - `services/docs-core/src/docs_core/parser/mineru_parser.py`
   - 输出解析产物清单并支持阶段进度回调。
 - `services/engtools/src/engtools/config.py`

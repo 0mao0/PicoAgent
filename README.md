@@ -60,6 +60,8 @@ admin-console 与 web-console 共享同一套 SmartTree / AIChat / 资源适配�
 
 ### 2.3 文档解析与对比查改架构（当前规划）
 
+![文档解析模块架构](./docs/Angineer-DocParseModule.png)
+
 ```text
 Admin B区（文档生命周期）
   -> 未解析（原文预览 + 解析 + 共享）
@@ -70,16 +72,23 @@ Admin B区（文档生命周期）
 
 ```text
 三策略后端实现（docs-core）
-  -> A_structured: services/docs-core/src/docs_core/storage/structured_strategy.py
-  -> B_mineru_rag: services/docs-core/src/docs_core/storage/mineru_rag_strategy.py
-  -> C_pageindex: services/docs-core/src/docs_core/storage/pageindex_strategy.py
+  -> A_structured: canonical structure 主链，落 `knowledge_index.sqlite`
+  -> B_mineru_rag: 只消费 A 主链 `document_segments` 的下游投影
+  -> C_pageindex: 只消费 A 主链 `doc_blocks` 的下游投影
 ```
 
 ```text
 存储规范（One Doc One Folder）
-data/knowledge_base/libraries/{library_id}/docs/{doc_id}/
-  source/ + parsed/ + edited/ + structured/
+data/knowledge_base/libraries/{library_id}/documents/{doc_id}/
+  source/ + parsed(content.md / mineru_raw / doc_blocks_graph.json) + edited/ + structured/
   (版本化: 基于 SCHEMA_VERSION 追踪解析产物结构一致性)
+```
+
+```text
+数据库拆分（docs-core）
+  -> knowledge_meta.sqlite: libraries / nodes / parse_tasks / artifacts / revisions
+  -> knowledge_index.sqlite: doc_blocks / document_segments
+  -> 仅保留双库：运行时与离线流程统一使用上述两库
 ```
 
 ---

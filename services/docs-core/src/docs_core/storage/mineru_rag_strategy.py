@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from pathlib import Path
 
-from .structured_strategy import extract_structured_items_from_markdown
-
 # -----------------------------------------------------------------------------
 # MinerURag Service Class
 # -----------------------------------------------------------------------------
@@ -156,19 +154,60 @@ class MinerURag:
 mineru_rag = MinerURag()
 
 
+# 将主链结构片段投影为 RAG 片段。
+def _build_rag_projection_items(structured_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for order_index, item in enumerate(structured_items):
+        meta = dict(item.get("meta") or {})
+        meta["source_strategy"] = "A_structured"
+        meta["projection"] = "rag"
+        items.append(
+            {
+                "id": str(item.get("id") or f"rag-{order_index}"),
+                "item_type": "rag_chunk",
+                "title": item.get("title") or f"rag_chunk_{order_index}",
+                "content": item.get("content") or "",
+                "meta": meta,
+                "order_index": order_index,
+            }
+        )
+    return items
+
+
+# 将主链结构片段串联为 RAG 构建器可消费的文本。
+def _build_rag_markdown(structured_items: List[Dict[str, Any]]) -> str:
+    lines: List[str] = []
+    for item in structured_items:
+        title = str(item.get("title") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if title:
+            lines.append(f"## {title}")
+        if content:
+            lines.append(content)
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+# 基于 canonical segments 构建 MinerU-RAG 下游索引。
 def build_mineru_rag_index_for_doc(library_id: str, doc_id: str, strategy: str = 'B_mineru_rag') -> Dict[str, Any]:
-    from docs_core import file_storage, knowledge_service
+    from docs_core import knowledge_service
 
-    markdown_content = file_storage.read_markdown(library_id, doc_id)
-    if markdown_content is None:
-        raise ValueError('文档尚无可用 Markdown 内容')
+    structured_items = knowledge_service.list_document_segments(doc_id, "A_structured")
+    if not structured_items:
+        from docs_core.storage.structured_strategy import build_structured_index_for_doc
 
-    items = extract_structured_items_from_markdown(markdown_content)
+        build_structured_index_for_doc(library_id, doc_id, "A_structured")
+        structured_items = knowledge_service.list_document_segments(doc_id, "A_structured")
+    if not structured_items:
+        raise ValueError("文档尚无可用 canonical segments")
+
+    items = _build_rag_projection_items(structured_items)
     saved_count = knowledge_service.save_document_segments(doc_id, library_id, strategy, items)
     rag_result: Dict[str, Any] = {'success': False}
+    rag_markdown = _build_rag_markdown(structured_items)
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as handle:
-        handle.write(markdown_content)
+        handle.write(rag_markdown)
         temp_md = handle.name
 
     try:

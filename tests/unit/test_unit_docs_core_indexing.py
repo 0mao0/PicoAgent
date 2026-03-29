@@ -19,6 +19,8 @@ from docs_core.storage.structured_strategy import (
     extract_structured_items_from_markdown,
     _build_a_structured_segment_items
 )
+from docs_core.storage.mineru_rag_strategy import _build_rag_projection_items
+from docs_core.storage.pageindex_strategy import _build_page_index_items
 from docs_core.parser.mineru_structure import (
     A1StructureResult,
     build_graph_from_mineru,
@@ -31,12 +33,18 @@ class IsolatedKnowledgeService(KnowledgeService):
 
     def __init__(self, db_path: Path):
         self._isolated_db_path = db_path
+        self._isolated_index_db_path = db_path.parent / "knowledge_index.sqlite"
         super().__init__()
 
     def _resolve_db_path(self) -> Path:
         """返回测试专用数据库路径。"""
         self._isolated_db_path.parent.mkdir(parents=True, exist_ok=True)
         return self._isolated_db_path
+
+    def _resolve_index_db_path(self) -> Path:
+        """返回测试专用索引数据库路径。"""
+        self._isolated_index_db_path.parent.mkdir(parents=True, exist_ok=True)
+        return self._isolated_index_db_path
 
 
 class TestFileStorage(unittest.TestCase):
@@ -91,7 +99,7 @@ class TestStructuredSegments(unittest.TestCase):
     def test_save_query_and_stats_segments(self):
         """测试结构化片段的保存、查询和统计。"""
         with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "knowledge.sqlite3"
+            db_path = Path(temp_dir) / "knowledge_meta.sqlite"
             service = IsolatedKnowledgeService(db_path)
             node = KnowledgeNode(
                 id="doc-2001",
@@ -409,6 +417,56 @@ class TestMarkdownExtractor(unittest.TestCase):
         self.assertIn("clause", types)
         self.assertIn("table", types)
         self.assertIn("image", types)
+
+
+class TestDownstreamProjection(unittest.TestCase):
+    """测试下游投影只消费主链标准结果。"""
+
+    def test_build_rag_projection_items_from_structured_segments(self):
+        """测试 RAG 投影直接消费 A_structured 片段。"""
+        items = _build_rag_projection_items(
+            [
+                {
+                    "id": "seg-1",
+                    "title": "第一章",
+                    "content": "这是第一章内容。",
+                    "meta": {"block_uid": "doc-1:0:1"},
+                }
+            ]
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["item_type"], "rag_chunk")
+        self.assertEqual(items[0]["meta"]["source_strategy"], "A_structured")
+        self.assertEqual(items[0]["meta"]["projection"], "rag")
+
+    def test_build_page_index_items_from_doc_blocks(self):
+        """测试 PageIndex 投影直接消费 doc_blocks。"""
+        items = _build_page_index_items(
+            [
+                {
+                    "block_uid": "doc-1:0:1",
+                    "block_type": "title",
+                    "plain_text": "总则",
+                    "page_idx": 0,
+                    "block_seq": 1,
+                    "derived_title_level": 1,
+                },
+                {
+                    "block_uid": "doc-1:0:2",
+                    "block_type": "paragraph",
+                    "plain_text": "这是正文内容。",
+                    "page_idx": 0,
+                    "block_seq": 2,
+                },
+            ]
+        )
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["item_type"], "page_heading")
+        self.assertEqual(items[0]["meta"]["page_no"], 1)
+        self.assertEqual(items[1]["item_type"], "page_segment")
+        self.assertEqual(items[1]["meta"]["block_uid"], "doc-1:0:2")
 
 
 if __name__ == "__main__":
