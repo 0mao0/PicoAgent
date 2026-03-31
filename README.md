@@ -67,14 +67,14 @@ Admin B区（文档生命周期）
   -> 未解析（原文预览 + 解析 + 共享）
   -> 解析中（任务进度可视化）
   -> 已解析（B1原文 + B2 Markdown可编辑）
-  -> 三策略切换（A结构化 / B MinerU-RAG / C PageIndex）
+  -> 结构化主链（A_structured）
 ```
 
 ```text
-三策略后端实现（docs-core）
-  -> A_structured: canonical structure 主链，落 `knowledge_index.sqlite`
-  -> B_mineru_rag: 只消费 A 主链 `document_segments` 的下游投影
-  -> C_pageindex: 只消费 A 主链 `doc_blocks` 的下游投影
+docs-core 后端实现
+  -> parser: 对接 MinerU，输出原始解析结果目录
+  -> structured: 完成结构化构建、索引落盘与文档存储
+  -> knowledge_service.py: 提供知识库元数据与索引服务门面
 ```
 
 ```text

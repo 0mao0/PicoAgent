@@ -1,5 +1,5 @@
 """
-MinerU 结构化数据生成器 - A1 结构结果对象生成
+MinerU 原始产物到 A1 结构对象的构建器
 
 核心算法：
 - 无限深度层级推断
@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
+
+from docs_core.structured.title_level_refiner import llm_refine_title_levels
 
 if TYPE_CHECKING:
     from angineer_core.infra.llm_client import LLMClient
@@ -775,65 +777,6 @@ def detect_toc_row_ids(rows: list[Any]) -> set[int]:
     return result
 
 
-def llm_refine_title_levels(
-    title_items: list[dict[str, Any]],
-    llm_client: Optional["LLMClient"] = None
-) -> tuple[dict[str, tuple[int, float]], str]:
-    """用LLM细化标题层级并返回状态。"""
-    if not llm_client:
-        return {}, "not_configured"
-    
-    if not title_items:
-        return {}, "ok"
-    
-    mini_items: list[dict[str, Any]] = []
-    for item in title_items:
-        mini_items.append({
-            "block_uid": item["block_uid"],
-            "text": item["plain_text"][:160],
-            "rule_level": item.get("rule_level"),
-        })
-    
-    system_prompt = (
-        "你是文档结构分析器。根据标题文本的编号层级判断标题级别(>=1，不限制上限)。"
-        "如果是目录项也按编号层级判断。仅返回JSON对象："
-        '{"items":[{"block_uid":"...","level":1,"confidence":0.95}]}'
-    )
-    user_prompt = json.dumps({"items": mini_items}, ensure_ascii=False)
-    
-    try:
-        result_text = llm_client.chat(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.0
-        )
-        
-        result = json.loads(result_text)
-        arr = result.get("items") if isinstance(result, dict) else result
-        refined: dict[str, tuple[int, float]] = {}
-        
-        if isinstance(arr, list):
-            for item in arr:
-                if not isinstance(item, dict):
-                    continue
-                uid = item.get("block_uid")
-                level = item.get("level")
-                conf = item.get("confidence", 0.8)
-                if isinstance(uid, str) and isinstance(level, int) and level >= 1:
-                    c = float(conf) if isinstance(conf, (int, float)) else 0.8
-                    c = max(0.0, min(1.0, c))
-                    refined[uid] = (level, c)
-        
-        if refined:
-            return refined, "ok"
-        return {}, "empty_result"
-        
-    except Exception as e:
-        return {}, f"error:{str(e)[:50]}"
-
-
 @dataclass
 class BlockNode:
     """块节点数据结构。"""
@@ -898,7 +841,7 @@ class A1StructureResult:
     stats: Dict[str, Any] = field(default_factory=dict)
 
 
-def build_graph_from_mineru(
+def build_a1_from_mineru(
     parsed_dir: Path,
     doc_id: str,
     doc_name: str = "",
@@ -1434,6 +1377,23 @@ def build_graph_from_mineru(
         edges=edges,
         index_rows=index_rows,
         stats=stats
+    )
+
+
+def build_graph_from_mineru(
+    parsed_dir: Path,
+    doc_id: str,
+    doc_name: str = "",
+    llm_client: Optional["LLMClient"] = None,
+    options: Optional[Dict[str, Any]] = None
+) -> A1StructureResult:
+    """兼容旧命名，转调到 build_a1_from_mineru。"""
+    return build_a1_from_mineru(
+        parsed_dir=parsed_dir,
+        doc_id=doc_id,
+        doc_name=doc_name,
+        llm_client=llm_client,
+        options=options,
     )
 
 

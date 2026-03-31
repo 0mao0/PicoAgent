@@ -56,13 +56,13 @@ sequenceDiagram
 - **健壮性兜底**：必须处理 MinerU 云端返回异常、空文件及压缩包解压失败等情况。
 - **解析产物版本化 (SCHEMA_VERSION)**：
   - `SCHEMA_VERSION` 贯穿整个解析流程。
-  - 在 `knowledge_api.py` 中，`knowledge_nodes`, `parse_tasks`, `structured_items` 表均包含 `schema_version` 字段。
+  - 在 `knowledge_service.py` 中，`knowledge_nodes`, `parse_tasks`, `structured_items` 表均包含 `schema_version` 字段。
   - 此版本号用于检测旧解析任务与当前逻辑的不兼容性，触发必要的强制重新解析。
 
 #### 索引与检索 (StructuredStrategy)
 - **坐标标准化**：所有 `bbox` 统一采用 `[x0, y0, x1, y1]` 格式，并与 `page_idx` 严格绑定。
 - **索引幂等性**：重新解析文档时，必须先清理该文档旧的索引数据，防止数据库冗余。
-- **并发控制**：在处理大规模并发解析请求时，利用任务队列 (TaskQueue) 进行限流，并已优化 `parse_api.py` 逻辑，减少了 60% 的代码冗余，提升了任务处理的可读性与响应速度。
+- **并发控制**：在处理大规模并发解析请求时，利用任务队列 (TaskQueue) 进行限流，并已将接口与调度逻辑收口到 `apps/api-server/knowledge_routes.py`，减少跨层薄文件带来的心智负担。
 
 ---
 
@@ -79,11 +79,12 @@ flowchart TB
 
   subgraph DocsCore["docs-core 知识引擎层"]
     KService["knowledge_service\n节点/任务元数据门面"]
-    Orchestrator["parse_service\n解析编排与状态推进"]
     Parser["mineru_parser\n高保真解析"]
-    Storage["file_storage\n一文档一目录与兼容路径"]
-    Struct["structured_strategy\nA 主链 canonical structure"]
+    Storage["document_storage\n一文档一目录与兼容路径"]
+    Struct["canonical_projection\nA 主链 canonical structure"]
   end
+
+  GatewayOrchestrator["knowledge_routes\n接口与解析调度"]
 
   subgraph Strategy["检索执行平面"]
     A["A: 自研结构化检索\n(SQLite)"]
@@ -102,12 +103,13 @@ flowchart TB
     TTool["TableTool\n优先表格索引, 回退文本抽取"]
   end
 
+  ParseAPI --> GatewayOrchestrator
   ParseAPI --> KService
-  ParseAPI --> Orchestrator
-  Orchestrator --> Parser
+  GatewayOrchestrator --> Parser
   Parser --> Storage
   Storage --> KB
   TaskAPI --> KService
+  TaskAPI --> GatewayOrchestrator
   DocAPI --> Storage
   StrategyAPI --> A
   StrategyAPI --> B
@@ -131,7 +133,7 @@ flowchart TB
 flowchart TB
   subgraph Ingest["解析入口 apps/api-server/main.py"]
     ParseReq["POST /api/knowledge/parse\n提交解析任务"]
-    ParseTask["parse_service.ParseOrchestrator\n执行解析主链与状态推进"]
+    ParseTask["knowledge_routes.ParseOrchestrator\n执行解析主链与状态推进"]
   end
 
   subgraph Parser["解析核心 services/docs-core/parser/mineru_parser.py"]
@@ -141,7 +143,7 @@ flowchart TB
     RecoverBlocks["ZIP 兜底恢复 blocks\n修复空 mineru_blocks.json"]
   end
 
-  subgraph Storage["存储层 services/docs-core/storage/file_storage.py"]
+  subgraph Storage["存储层 services/docs-core/storage/document_storage.py"]
     SaveMd["save_markdown\n写入 parsed/content.md"]
     SaveArtifacts["save_parse_artifacts\n写入 parsed/mineru_raw + assets"]
     KeepAssets["保留解析原始工件\n用于前端图片展示与重建"]
@@ -209,16 +211,14 @@ data/knowledge_base/libraries/{library_id}/documents/{doc_id}/
 - `apps/api-server/main.py`
   - 解析接口改异步任务化，返回 `task_id`。
   - 增加任务进度查询、文档版本、策略切换与统一查询接口。
-  - 三策略索引构建改为路由分发，实际实现下沉到 `docs_core.storage.*_strategy`。
-- `services/docs-core/src/docs_core/storage/structured_strategy.py`
-  - A 策略主链：统一生成 canonical structure，并写入 `knowledge_index.sqlite`。
-- `services/docs-core/src/docs_core/storage/mineru_rag_strategy.py`
-  - B 策略（MinerU-RAG）只消费 A 主链 `document_segments`，不再平行解析 Markdown。
-- `services/docs-core/src/docs_core/storage/pageindex_strategy.py`
-  - C 策略（PageIndex）只消费 A 主链 `doc_blocks`，生成分页投影。
-- `services/docs-core/src/docs_core/api/knowledge_api.py`
+  - 保持单一 `A_structured` 索引构建，调用 `docs_core.structured.canonical_projection`。
+- `services/docs-core/src/docs_core/structured/canonical_projection.py`
+  - 结构化主链：统一生成 canonical structure，并写入 `knowledge_index.sqlite`。
+- `services/docs-core/src/docs_core/structured/doc_block_store.py`
+  - 承担 `doc_blocks` 主索引的写入、查询与统计，供结构化链路复用。
+- `services/docs-core/src/docs_core/knowledge_service.py`
   - 作为元数据门面，持有 `KnowledgeMetaStore` 与 `KnowledgeIndexStore` 双库访问。
-- `services/docs-core/src/docs_core/storage/file_storage.py`
+- `services/docs-core/src/docs_core/structured/document_storage.py`
   - 实现一文档一目录读写 API，并统一 canonical raw path 解析。
 - `services/docs-core/src/docs_core/parser/mineru_parser.py`
   - 输出解析产物清单并支持阶段进度回调。

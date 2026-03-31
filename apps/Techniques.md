@@ -23,14 +23,14 @@
 
 ### SCHEMA_VERSION (Docs 模块)
 
-`SCHEMA_VERSION` 定义在 `services/docs-core/src/docs_core/api/knowledge_api.py` 中，用于追踪 **文档解析产物（Parsing Artifacts）的结构版本**。
+`SCHEMA_VERSION` 定义在 `services/docs-core/src/docs_core/knowledge_service.py` 中，用于追踪 **文档解析产物（Parsing Artifacts）的结构版本**。
 
 - **作用范围**：
   - 影响 `KnowledgeNode` 和 `ParseTask` 数据库表。
   - 标识解析产物（Markdown, JSON 索引, 图片等）的存储结构是否与当前代码逻辑兼容。
 - **版本提升准则**：
   - 当修改了解析产物的目录结构时。
-  - 当修改了 `A_structured` / `B_mineru_rag` 等策略生成的索引 JSON 格式时。
+  - 当修改了 `A_structured` 生成的索引 JSON 格式时。
   - 当需要强制所有存量文档重新解析以适配新功能时。
 - **当前版本**：`1.0.0`
 
@@ -311,7 +311,7 @@ flowchart TB
 
 - `apps/admin-console/src/views/KnowledgeManage.vue`
   - 拆分 B 区状态机渲染：未解析、解析中、已解析。
-  - 新增策略选择器：`A_structured` / `B_mineru_rag` / `C_pageindex`。
+  - 保持单一结构化策略：`A_structured`。
   - 新增解析进度轮询（按 `task_id` 获取进度）。
   - 已解析态改为 B1/B2 双区：左原文，右 Markdown 预览/编辑。
 - `apps/admin-console/src/views/components/DocumentPreview.vue`
@@ -336,13 +336,17 @@ flowchart TB
   - 新增 `/api/knowledge/strategies/*`（文档策略设置、按策略检索）。
   - 新增 `/api/knowledge/document/{library_id}/{doc_id}/revisions`。
   - 新增 `/api/knowledge/document/{library_id}/{doc_id}/structured`（统一结构化输出）。
-  - 三策略构建逻辑分发到 `services/docs-core/src/docs_core/api/parse_api.py`，具体实现下沉到 `structured_strategy.py`、`mineru_rag_strategy.py`、`pageindex_strategy.py`。
-- `services/docs-core/src/docs_core/api/parse_service.py`
-  - 统一解析主链编排：任务创建、阶段推进、MinerU 调用、产物落盘、A 主链索引构建。
+  - 三策略构建逻辑分发到 `apps/api-server/knowledge_routes.py`，具体实现下沉到 `canonical_projection.py`、`rag_projection.py`、`page_projection.py`。
+- `apps/api-server/knowledge_routes.py`
+  - 统一承载知识库路由、文件预览路由与解析主链编排：任务创建、阶段推进、MinerU 调用、产物落盘、A 主链索引构建。
+- `services/docs-core/src/docs_core/projection/*.py`
+  - A/B/C 三类投影策略分别承载 structured、MinerU-RAG、PageIndex 的下游投影逻辑。
+- `services/docs-core/src/docs_core/index/doc_block_store.py`
+  - 抽离 `doc_blocks` 索引写入、查询、统计，避免与文件存储职责混放。
 - `services/docs-core/src/docs_core/parser/mineru_parser.py`
   - 保留 MinerU 解析能力，补充任务阶段回调（若 SDK 无实时进度则用阶段进度）。
   - 增加解析产物清单返回（md、assets、metadata）。
-- `services/docs-core/src/docs_core/storage/file_storage.py`
+- `services/docs-core/src/docs_core/storage/document_storage.py`
   - 改造为“一文档一目录”结构。
   - 新增路径方法：`get_doc_root`、`get_graph_path`、`get_mineru_raw_dir`、`resolve_canonical_raw_dir`、`save_revision`。
   - 提供旧路径兼容读取逻辑（迁移期间双读）。
@@ -355,7 +359,7 @@ flowchart TB
 
 ### 3）数据表（按文件级）
 
-- `services/docs-core/src/docs_core/api/knowledge_api.py`
+- `services/docs-core/src/docs_core/knowledge_service.py`
   - 作为服务门面，内部拆分为 `KnowledgeMetaStore` 与 `KnowledgeIndexStore`。
   - 现有 `nodes` 表增加字段：
     - `parse_progress INTEGER`
@@ -761,7 +765,7 @@ const onDropRoot = async (dragNodeKey: string) => {
 
 ### 持久化与数据库
 
-- 知识树服务已使用 SQLite 持久化，见 [knowledge_api.py](file:///d:/AI/AnGIneer/services/docs-core/src/docs_core/api/knowledge_api.py)。
+- 知识树服务已使用 SQLite 持久化，见 [knowledge_service.py](file:///d:/AI/AnGIneer/services/docs-core/src/docs_core/knowledge_service.py)。
 - 默认数据库文件已拆分为：`data/knowledge_base/knowledge_meta.sqlite` 与 `data/knowledge_base/knowledge_index.sqlite`。
 - `nodes` 表含 `sort_order` 字段，支持同级顺序持久化与重排。
 - 建议使用“整体后端统一数据库”，不建议为 SmartTree 单独建独立数据库。

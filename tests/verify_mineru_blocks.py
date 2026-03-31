@@ -11,7 +11,7 @@ docs_core_path = project_root / 'services' / 'docs-core' / 'src'
 sys.path.insert(0, str(docs_core_path))
 
 try:
-    from docs_core.parser.mineru_structure import MinerUStructureBuilder
+    from docs_core.structured.mineru_to_a1 import MinerUStructureBuilder
 except ImportError:
     print("Error: Could not import MinerUStructureBuilder. Please ensure services/docs-core/src is in python path.")
     sys.exit(1)

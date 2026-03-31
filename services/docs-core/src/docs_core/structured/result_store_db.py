@@ -1,10 +1,12 @@
-"""知识库数据库网关。"""
+"""结构化结果数据库存储。"""
 import json
 import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from docs_core.structured.mineru_to_a1 import A1StructureResult
 
 
 KNOWLEDGE_META_DB_NAME = "knowledge_meta.sqlite"
@@ -716,3 +718,58 @@ class KnowledgeIndexStore:
             total += cnt
             summary.setdefault(strategy, {})[item_type] = cnt
         return {"doc_id": doc_id, "total": total, "strategies": summary}
+
+
+_index_store = KnowledgeIndexStore()
+
+
+# 持久化 doc_blocks 主索引。
+def persist_doc_blocks(result: A1StructureResult) -> Dict[str, int]:
+    base_rows = result.stats.get("base_rows", []) or []
+    derived_rows = result.stats.get("derived_rows", []) or []
+    doc_id = ""
+    if base_rows:
+        doc_id = str(base_rows[0].get("doc_id") or "")
+    elif derived_rows:
+        doc_id = str(derived_rows[0].get("doc_id") or "")
+    if doc_id:
+        _index_store.clear_doc_blocks(doc_id)
+    inserted = _index_store.insert_doc_blocks_base_rows(base_rows) if base_rows else 0
+    updated = _index_store.update_doc_blocks_derived_rows(derived_rows) if derived_rows else 0
+    return {"inserted": inserted, "updated": updated}
+
+
+# 查询文档块记录。
+def query_doc_blocks(
+    doc_id: str,
+    block_type: Optional[str] = None,
+    derived_level: Optional[int] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    return _index_store.query_doc_blocks(
+        doc_id=doc_id,
+        block_type=block_type,
+        derived_level=derived_level,
+        limit=limit,
+    )
+
+
+# 获取文档块统计信息。
+def get_doc_blocks_stats(doc_id: str) -> Dict[str, Any]:
+    return _index_store.get_doc_blocks_stats(doc_id)
+
+
+__all__ = [
+    "KNOWLEDGE_INDEX_DB_NAME",
+    "KNOWLEDGE_META_DB_NAME",
+    "KnowledgeIndexStore",
+    "KnowledgeMetaStore",
+    "create_connection",
+    "get_doc_blocks_stats",
+    "parse_datetime",
+    "persist_doc_blocks",
+    "query_doc_blocks",
+    "resolve_knowledge_base_dir",
+    "resolve_knowledge_index_db_path",
+    "resolve_knowledge_meta_db_path",
+]

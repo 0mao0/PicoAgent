@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from docs_core.storage.knowledge_store import (
+from docs_core.structured.result_store_db import (
     KnowledgeIndexStore,
     KnowledgeMetaStore,
     parse_datetime,
@@ -159,38 +159,33 @@ class KnowledgeService:
                 sibling.updated_at = datetime.now()
                 self.meta_store.upsert_node(sibling)
 
+    # 获取知识库列表。
     def list_libraries(self) -> List[KnowledgeLibrary]:
-        """获取知识库列表。"""
-
         return self.libraries
 
+    # 创建知识库。
     def create_library(self, library_id: str, name: str, description: str = "") -> KnowledgeLibrary:
-        """创建知识库。"""
-
         library = KnowledgeLibrary(id=library_id, name=name, description=description)
         self.libraries.append(library)
         self.meta_store.upsert_library(library)
         return library
 
+    # 获取知识库。
     def get_library(self, library_id: str) -> Optional[KnowledgeLibrary]:
-        """获取知识库。"""
-
         for library in self.libraries:
             if library.id == library_id:
                 return library
         return None
 
+    # 获取知识库节点列表。
     def list_nodes(self, library_id: str, visible: bool = False) -> List[KnowledgeNode]:
-        """获取知识库节点列表。"""
-
         nodes = [node for node in self.nodes if node.library_id == library_id]
         if visible:
             nodes = [node for node in nodes if node.visible]
         return sorted(nodes, key=lambda node: (node.sort_order, node.created_at))
 
+    # 创建节点。
     def create_node(self, node: KnowledgeNode) -> KnowledgeNode:
-        """创建节点。"""
-
         sibling_orders = [
             item.sort_order for item in self.nodes if item.library_id == node.library_id and item.parent_id == node.parent_id
         ]
@@ -202,6 +197,7 @@ class KnowledgeService:
         self.meta_store.upsert_node(node)
         return node
 
+    # 按文件路径注册文档节点。
     def register_document(
         self,
         library_id: str,
@@ -210,8 +206,6 @@ class KnowledgeService:
         title: Optional[str] = None,
         parent_id: Optional[str] = None,
     ) -> KnowledgeNode:
-        """按文件路径注册文档节点。"""
-
         source_path = Path(file_path)
         resolved_doc_id = doc_id or source_path.stem
         existing = self.get_node(resolved_doc_id)
@@ -229,9 +223,8 @@ class KnowledgeService:
         )
         return self.create_node(node)
 
+    # 更新节点。
     def update_node(self, node_id: str, **kwargs: Any) -> Optional[KnowledgeNode]:
-        """更新节点。"""
-
         for node in self.nodes:
             if node.id != node_id:
                 continue
@@ -258,9 +251,8 @@ class KnowledgeService:
             return node
         return None
 
+    # 删除节点。
     def delete_node(self, node_id: str) -> bool:
-        """删除节点。"""
-
         if node_id not in {node.id for node in self.nodes}:
             return False
         target = self.get_node(node_id)
@@ -278,17 +270,15 @@ class KnowledgeService:
             self._normalize_sibling_orders(target.library_id, target.parent_id)
         return True
 
+    # 获取节点。
     def get_node(self, node_id: str) -> Optional[KnowledgeNode]:
-        """获取节点。"""
-
         for node in self.nodes:
             if node.id == node_id:
                 return node
         return None
 
+    # 创建解析任务。
     def create_parse_task(self, task_id: str, library_id: str, doc_id: str) -> ParseTask:
-        """创建解析任务。"""
-
         now = datetime.now()
         task = ParseTask(
             id=task_id,
@@ -304,17 +294,15 @@ class KnowledgeService:
         self.meta_store.upsert_parse_task(task)
         return task
 
+    # 获取解析任务。
     def get_parse_task(self, task_id: str) -> Optional[ParseTask]:
-        """获取解析任务。"""
-
         for task in self.parse_tasks:
             if task.id == task_id:
                 return task
         return None
 
+    # 更新解析任务。
     def update_parse_task(self, task_id: str, **kwargs: Any) -> Optional[ParseTask]:
-        """更新解析任务。"""
-
         task = self.get_parse_task(task_id)
         if not task:
             return None
@@ -325,11 +313,11 @@ class KnowledgeService:
         self.meta_store.upsert_parse_task(task)
         return task
 
+    # 删除文档结构化片段。
     def clear_document_segments(self, doc_id: str, strategy: Optional[str] = None) -> int:
-        """删除文档结构化片段。"""
-
         return self.index_store.clear_document_segments(doc_id, strategy)
 
+    # 保存文档结构化片段。
     def save_document_segments(
         self,
         doc_id: str,
@@ -337,10 +325,9 @@ class KnowledgeService:
         strategy: str,
         items: List[Dict[str, Any]],
     ) -> int:
-        """保存文档结构化片段。"""
-
         return self.index_store.save_document_segments(doc_id, library_id, strategy, items)
 
+    # 查询文档结构化片段。
     def list_document_segments(
         self,
         doc_id: str,
@@ -349,8 +336,6 @@ class KnowledgeService:
         keyword: Optional[str] = None,
         limit: int = 200,
     ) -> List[Dict[str, Any]]:
-        """查询文档结构化片段。"""
-
         return self.index_store.list_document_segments(
             doc_id=doc_id,
             strategy=strategy,
@@ -359,10 +344,19 @@ class KnowledgeService:
             limit=limit,
         )
 
+    # 统计文档结构化片段。
     def get_document_segment_stats(self, doc_id: str) -> Dict[str, Any]:
-        """统计文档结构化片段。"""
-
         return self.index_store.get_document_segment_stats(doc_id)
 
 
 knowledge_service = KnowledgeService()
+
+
+__all__ = [
+    "KnowledgeLibrary",
+    "KnowledgeNode",
+    "KnowledgeService",
+    "ParseTask",
+    "SCHEMA_VERSION",
+    "knowledge_service",
+]

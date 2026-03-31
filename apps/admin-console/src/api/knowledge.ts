@@ -96,13 +96,6 @@ export const knowledgeApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },
-
-  // RAG
-  ragQuery: (question: string, libraryId: string = 'default', k: number = 4, useLlm: boolean = true) => 
-    api.post('/knowledge/rag/query', { question, library_id: libraryId, k, use_llm: useLlm }),
-  ragBuild: (libraryId: string, docIds: string[]) => 
-    api.post('/knowledge/rag/build', { library_id: libraryId, doc_ids: docIds }),
-
   // 文档内容
   getDocument: (libraryId: string, docId: string) => 
     api.get(`/knowledge/document/${libraryId}/${docId}`) as Promise<DocumentResponse>,

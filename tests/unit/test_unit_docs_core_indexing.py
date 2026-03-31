@@ -13,17 +13,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "services" / "docs-core" / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "apps" / "api-server"))
 
-from docs_core.storage.file_storage import FileStorage
-from docs_core.api.knowledge_api import KnowledgeService, KnowledgeNode
-from docs_core.storage.structured_strategy import (
+from docs_core.structured.result_store_json import FileStorage
+from docs_core.knowledge_service import KnowledgeService, KnowledgeNode
+from docs_core.structured.result_store_json import (
     extract_structured_items_from_markdown,
     _build_a_structured_segment_items
 )
-from docs_core.storage.mineru_rag_strategy import _build_rag_projection_items
-from docs_core.storage.pageindex_strategy import _build_page_index_items
-from docs_core.parser.mineru_structure import (
+from docs_core.structured.mineru_to_a1 import (
     A1StructureResult,
-    build_graph_from_mineru,
+    build_a1_from_mineru,
     collect_media_related_block_refs
 )
 
@@ -297,8 +295,8 @@ class TestStructuredSegments(unittest.TestCase):
         self.assertEqual(refs["footnote_block_uids"], ["doc-1:0:12"])
 
     # 测试解析阶段会优先按顺序而非按文本把 model.json 的 bbox 对齐回来。
-    def test_build_graph_from_mineru_enriches_caption_and_footnote_bboxes(self):
-        """测试 build_graph_from_mineru 会优先按顺序把 model.json 中的图表题注 bbox 写入结果。"""
+    def test_build_a1_from_mineru_enriches_caption_and_footnote_bboxes(self):
+        """测试 build_a1_from_mineru 会优先按顺序把 model.json 中的图表题注 bbox 写入结果。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             parsed_dir = Path(temp_dir)
             raw_dir = parsed_dir / "mineru_raw"
@@ -374,7 +372,7 @@ class TestStructuredSegments(unittest.TestCase):
                 encoding="utf-8"
             )
 
-            result = build_graph_from_mineru(parsed_dir, "doc-test", "测试文档", llm_client=None, options={"use_llm": False})
+            result = build_a1_from_mineru(parsed_dir, "doc-test", "测试文档", llm_client=None, options={"use_llm": False})
 
             self.assertEqual(len(result.nodes), 3)
             table_node = next(node for node in result.nodes if node["block_type"] == "table")
@@ -417,56 +415,6 @@ class TestMarkdownExtractor(unittest.TestCase):
         self.assertIn("clause", types)
         self.assertIn("table", types)
         self.assertIn("image", types)
-
-
-class TestDownstreamProjection(unittest.TestCase):
-    """测试下游投影只消费主链标准结果。"""
-
-    def test_build_rag_projection_items_from_structured_segments(self):
-        """测试 RAG 投影直接消费 A_structured 片段。"""
-        items = _build_rag_projection_items(
-            [
-                {
-                    "id": "seg-1",
-                    "title": "第一章",
-                    "content": "这是第一章内容。",
-                    "meta": {"block_uid": "doc-1:0:1"},
-                }
-            ]
-        )
-
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["item_type"], "rag_chunk")
-        self.assertEqual(items[0]["meta"]["source_strategy"], "A_structured")
-        self.assertEqual(items[0]["meta"]["projection"], "rag")
-
-    def test_build_page_index_items_from_doc_blocks(self):
-        """测试 PageIndex 投影直接消费 doc_blocks。"""
-        items = _build_page_index_items(
-            [
-                {
-                    "block_uid": "doc-1:0:1",
-                    "block_type": "title",
-                    "plain_text": "总则",
-                    "page_idx": 0,
-                    "block_seq": 1,
-                    "derived_title_level": 1,
-                },
-                {
-                    "block_uid": "doc-1:0:2",
-                    "block_type": "paragraph",
-                    "plain_text": "这是正文内容。",
-                    "page_idx": 0,
-                    "block_seq": 2,
-                },
-            ]
-        )
-
-        self.assertEqual(len(items), 2)
-        self.assertEqual(items[0]["item_type"], "page_heading")
-        self.assertEqual(items[0]["meta"]["page_no"], 1)
-        self.assertEqual(items[1]["item_type"], "page_segment")
-        self.assertEqual(items[1]["meta"]["block_uid"], "doc-1:0:2")
 
 
 if __name__ == "__main__":

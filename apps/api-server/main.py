@@ -43,13 +43,13 @@ from engtools.BaseTool import ToolRegistry, register_tool
 from engtools import * 
 import geo_core.GisTool
 import engtools.KnowledgeTool
-from docs_core.api import parse_api, preview_api
+from knowledge_routes import knowledge_router, preview_router
 
 app = FastAPI(title="AnGIneer API Bridge")
 
 # Mount sub-routers
-app.include_router(parse_api.router, prefix="/api/knowledge", tags=["Knowledge"])
-app.include_router(preview_api.router, prefix="/api", tags=["Preview"])
+app.include_router(knowledge_router, prefix="/api/knowledge", tags=["Knowledge"])
+app.include_router(preview_router, prefix="/api", tags=["Preview"])
 
 # Initialize SOP Loader
 SOP_DIR = os.path.join(ROOT_DIR, "data", "sops", "raw")
@@ -121,16 +121,6 @@ class KnowledgeStructuredIndexRequest(BaseModel):
     doc_id: str
     strategy: Optional[str] = 'A_structured'
 
-class KnowledgeRagQueryRequest(BaseModel):
-    question: str
-    library_id: Optional[str] = 'default'
-    k: Optional[int] = 4
-    use_llm: Optional[bool] = True
-
-class KnowledgeRagBuildRequest(BaseModel):
-    library_id: str
-    doc_ids: List[str]
-
 class KnowledgeDocumentUpdate(BaseModel):
     content: str
 
@@ -170,21 +160,15 @@ execution_trace = []
 
 
 def _extract_structured_items_from_markdown(markdown_text: str) -> List[Dict[str, Any]]:
-    from docs_core.storage.structured_strategy import extract_structured_items_from_markdown
+    from docs_core.structured.result_store_json import extract_structured_items_from_markdown
     return extract_structured_items_from_markdown(markdown_text)
 
 
 def _build_structured_index_for_doc(library_id: str, doc_id: str, strategy: str = 'A_structured') -> Dict[str, Any]:
-    if strategy == 'A_structured':
-        from docs_core.storage.structured_strategy import build_structured_index_for_doc
-        return build_structured_index_for_doc(library_id, doc_id, strategy)
-    if strategy == 'B_mineru_rag':
-        from docs_core.storage.mineru_rag_strategy import build_mineru_rag_index_for_doc
-        return build_mineru_rag_index_for_doc(library_id, doc_id, strategy)
-    if strategy == 'C_pageindex':
-        from docs_core.storage.pageindex_strategy import build_pageindex_for_doc
-        return build_pageindex_for_doc(library_id, doc_id, strategy)
-    raise ValueError(f'Unsupported strategy: {strategy}')
+    if strategy != 'A_structured':
+        raise ValueError(f'Unsupported strategy: {strategy}')
+    from docs_core.structured.result_store_json import build_structured_index_for_doc
+    return build_structured_index_for_doc(library_id, doc_id, strategy)
 
 class TraceDispatcher(Dispatcher):
     """
@@ -1085,20 +1069,20 @@ def run_test(test_id: str, config: str = None, query: str = None, mode: str = "i
 @app.get("/api/knowledge/libraries")
 def list_knowledge_libraries():
     """获取知识库列表"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     return knowledge_service.list_libraries()
 
 @app.post("/api/knowledge/libraries")
 def create_knowledge_library(request: KnowledgeLibraryCreate):
     """创建知识库"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     library = knowledge_service.create_library(request.library_id, request.name, request.description)
     return library
 
 @app.get("/api/knowledge/libraries/{library_id}")
 def get_knowledge_library(library_id: str):
     """获取知识库"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     library = knowledge_service.get_library(library_id)
     if not library:
         raise HTTPException(status_code=404, detail="Library not found")
@@ -1107,13 +1091,13 @@ def get_knowledge_library(library_id: str):
 @app.get("/api/knowledge/nodes")
 def list_knowledge_nodes(library_id: str = 'default', visible: bool = False):
     """获取知识库节点列表"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     return knowledge_service.list_nodes(library_id, visible)
 
 @app.post("/api/knowledge/nodes")
 def create_knowledge_node(request: KnowledgeNodeCreate):
     """创建知识库节点"""
-    from docs_core import knowledge_service, KnowledgeNode
+    from docs_core.knowledge_service import KnowledgeNode, knowledge_service
     parent_id = request.parent_id
     # 统一处理根节点标识
     if not parent_id or parent_id in ['', 'undefined', '__root__', 'null', 'None']:
@@ -1142,7 +1126,7 @@ def create_knowledge_node(request: KnowledgeNodeCreate):
 @app.patch("/api/knowledge/nodes/{node_id}")
 def update_knowledge_node(node_id: str, request: KnowledgeNodeUpdate):
     """更新知识库节点"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     import logging
     
     # 获取原始节点
@@ -1201,7 +1185,7 @@ def update_knowledge_node(node_id: str, request: KnowledgeNodeUpdate):
 @app.delete("/api/knowledge/nodes/{node_id}")
 def delete_knowledge_node(node_id: str):
     """删除知识库节点"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     success = knowledge_service.delete_node(node_id)
     if not success:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -1214,7 +1198,8 @@ async def upload_document(
     parent_id: Optional[str] = Form(None)
 ):
     """上传文档到知识库"""
-    from docs_core import knowledge_service, file_storage, KnowledgeNode
+    from docs_core.knowledge_service import KnowledgeNode, knowledge_service
+    from docs_core.structured.result_store_json import file_storage
     from datetime import datetime
     allowed_extensions = {'.pdf', '.doc', '.docx', '.md'}
     ext = os.path.splitext(file.filename or '')[1].lower()
@@ -1266,7 +1251,7 @@ async def upload_document(
 @app.get("/api/knowledge/parse/tasks/{task_id}")
 def get_parse_task(task_id: str):
     """获取解析任务状态"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     task = knowledge_service.get_parse_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1276,7 +1261,7 @@ def get_parse_task(task_id: str):
 @app.get("/api/knowledge/strategies/{doc_id}")
 def get_doc_strategy(doc_id: str):
     """获取文档策略"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     node = knowledge_service.get_node(doc_id)
     if not node:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1286,9 +1271,9 @@ def get_doc_strategy(doc_id: str):
 @app.put("/api/knowledge/strategies/{doc_id}")
 def set_doc_strategy(doc_id: str, request: KnowledgeStrategyUpdate):
     """设置文档策略"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     strategy = request.strategy
-    allowed = {'A_structured', 'B_mineru_rag', 'C_pageindex'}
+    allowed = {'A_structured'}
     if strategy not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported strategy")
     node = knowledge_service.update_node(doc_id, strategy=strategy)
@@ -1300,14 +1285,14 @@ def set_doc_strategy(doc_id: str, request: KnowledgeStrategyUpdate):
 @app.post("/api/knowledge/structured/index")
 def build_structured_index(request: KnowledgeStructuredIndexRequest):
     """构建结构化索引"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     doc_id = request.doc_id
     library_id = request.library_id
     strategy = request.strategy or 'A_structured'
     node = knowledge_service.get_node(doc_id)
     if not node:
         raise HTTPException(status_code=404, detail="Document not found")
-    allowed = {'A_structured', 'B_mineru_rag', 'C_pageindex'}
+    allowed = {'A_structured'}
     if strategy not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported strategy")
     try:
@@ -1333,7 +1318,7 @@ def get_structured_index(
     limit: int = 200
 ):
     """查询结构化索引"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     node = knowledge_service.get_node(doc_id)
     if not node:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1350,101 +1335,18 @@ def get_structured_index(
 @app.get("/api/knowledge/structured/stats/{doc_id}")
 def get_structured_stats(doc_id: str):
     """获取结构化索引统计"""
-    from docs_core import knowledge_service
+    from docs_core.knowledge_service import knowledge_service
     node = knowledge_service.get_node(doc_id)
     if not node:
         raise HTTPException(status_code=404, detail="Document not found")
     return knowledge_service.get_document_segment_stats(doc_id)
 
 
-@app.post("/api/knowledge/rag/query")
-def rag_query(request: KnowledgeRagQueryRequest):
-    """RAG 查询 - 使用 angineer-core LLM 客户端"""
-    from docs_core import mineru_rag
-    from angineer_core.infra.llm_client import LLMClient
-    
-    question = request.question
-    library_id = request.library_id or 'default'
-    k = request.k or 4
-    use_llm = request.use_llm if request.use_llm is not None else True
-    
-    # 先检索相关知识
-    rag_result = mineru_rag.query(question, k, library_id)
-    
-    if not use_llm or rag_result.get('num_sources', 0) == 0:
-        return {
-            'question': question,
-            'answer': '未找到相关知识，请先上传并解析文档。',
-            'num_sources': 0,
-            'sources': []
-        }
-    
-    # 使用 angineer-core 的 LLM 客户端生成答案
-    try:
-        llm_client = LLMClient()
-        
-        # 构建上下文
-        sources = rag_result.get('sources', [])
-        context = "\n\n".join([
-            f"[文档 {i+1}] {s.get('title', '未知')}:\n{s.get('content', '')[:500]}"
-            for i, s in enumerate(sources[:k])
-        ])
-        
-        # 构建提示词
-        prompt = f"""基于以下知识库内容回答问题：
-
-{context}
-
-问题：{question}
-
-请根据上述知识库内容给出准确、简洁的回答。如果知识库中没有相关信息，请明确说明。"""
-        
-        # 调用 LLM
-        response = llm_client.query(prompt)
-        
-        return {
-            'question': question,
-            'answer': response.get('result', '抱歉，无法生成回答。'),
-            'num_sources': len(sources),
-            'sources': [{'title': s.get('title', '未知'), 'id': s.get('id', '')} for s in sources[:k]]
-        }
-    except Exception as e:
-        return {
-            'question': question,
-            'answer': f'LLM 调用失败：{str(e)}',
-            'num_sources': rag_result.get('num_sources', 0),
-            'sources': rag_result.get('sources', [])
-        }
-
-@app.post("/api/knowledge/rag/build")
-def rag_build(request: KnowledgeRagBuildRequest):
-    """构建知识库"""
-    from docs_core import mineru_rag, file_storage
-    import glob
-    
-    library_id = request.library_id
-    doc_ids = request.doc_ids
-    
-    md_files = []
-    for doc_id in doc_ids:
-        md_content = file_storage.read_markdown(library_id, doc_id)
-        if md_content:
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as f:
-                f.write(md_content)
-                md_files.append(f.name)
-    
-    if md_files:
-        result = mineru_rag.build_knowledge_base(md_files, library_id)
-        return result
-    
-    return {"status": "error", "error": "No valid markdown files found"}
-
 @app.get("/api/knowledge/document/{library_id}/{doc_id}")
 def get_document(library_id: str, doc_id: str):
     """获取文档内容"""
-    from docs_core import file_storage
-    from docs_core.storage.structured_strategy import get_doc_blocks_graph
+    from docs_core.structured.result_store_json import file_storage
+    from docs_core.structured.result_store_json import get_doc_blocks_graph
 
     content = file_storage.read_markdown(library_id, doc_id)
     if content is None:
@@ -1463,7 +1365,8 @@ def get_document(library_id: str, doc_id: str):
 @app.put("/api/knowledge/document/{library_id}/{doc_id}")
 def update_document(library_id: str, doc_id: str, request: KnowledgeDocumentUpdate):
     """更新文档内容"""
-    from docs_core import file_storage, knowledge_service
+    from docs_core.knowledge_service import knowledge_service
+    from docs_core.structured.result_store_json import file_storage
     content = request.content
     saved_path = file_storage.save_edited_markdown(library_id, doc_id, content)
     knowledge_service.update_node(doc_id, updated_at=datetime.now())
@@ -1473,7 +1376,8 @@ def update_document(library_id: str, doc_id: str, request: KnowledgeDocumentUpda
 @app.get("/api/knowledge/storage/{library_id}/{doc_id}")
 def get_document_storage(library_id: str, doc_id: str):
     """获取文档存储布局"""
-    from docs_core import file_storage, knowledge_service
+    from docs_core.knowledge_service import knowledge_service
+    from docs_core.structured.result_store_json import file_storage
     node = knowledge_service.get_node(doc_id)
     if not node:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1483,7 +1387,7 @@ def get_document_storage(library_id: str, doc_id: str):
 @app.post("/api/knowledge/storage/reorganize")
 def reorganize_storage():
     """触发存储目录标准化"""
-    from docs_core import file_storage
+    from docs_core.structured.result_store_json import file_storage
     file_storage.reorganize_storage()
     return {"status": "success"}
 
