@@ -7,9 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from docs_core.structured.mineru_to_a1 import (
-    A1StructureResult,
-    build_a1_from_mineru,
+from docs_core.structured.rawfiles_to_structured import (
+    StructuredResult,
+    build_structured_from_rawfiles,
 )
 from docs_core.structured.result_store_db import persist_doc_blocks
 
@@ -370,7 +370,7 @@ def _get_llm_client():
 def _save_doc_blocks_graph(
     library_id: str,
     doc_id: str,
-    result: A1StructureResult,
+    result: StructuredResult,
 ) -> str:
     graph_path = file_storage.get_graph_path(library_id, doc_id)
 
@@ -392,7 +392,7 @@ def _persist_structured_segments(
     library_id: str,
     doc_id: str,
     strategy: str,
-    result: A1StructureResult,
+    result: StructuredResult,
 ) -> int:
     from docs_core.knowledge_service import knowledge_service
 
@@ -514,9 +514,9 @@ def _collect_media_related_block_refs(
     return result
 
 
-# 从 A1 结果构建 A_structured 片段投影。
+# 从结构化结果构建 A_structured 片段投影。
 def _build_a_structured_segment_items(
-    result: A1StructureResult,
+    result: StructuredResult,
 ) -> List[Dict[str, Any]]:
     node_map: Dict[str, Dict[str, Any]] = {}
     for node in result.nodes:
@@ -640,7 +640,7 @@ def build_structured_index_for_doc(
     if doc_info.get("source_file"):
         doc_name = Path(doc_info["source_file"]).name
 
-    result = build_a1_from_mineru(
+    result = build_structured_from_rawfiles(
         parsed_dir=parsed_dir,
         doc_id=doc_id,
         doc_name=doc_name,

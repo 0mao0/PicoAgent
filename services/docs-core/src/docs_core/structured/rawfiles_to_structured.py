@@ -1,5 +1,5 @@
 """
-MinerU 原始产物到 A1 结构对象的构建器
+原始解析文件到结构化结果对象的构建器
 
 核心算法：
 - 无限深度层级推断
@@ -7,7 +7,7 @@ MinerU 原始产物到 A1 结构对象的构建器
 - 公式解释连续下挂
 - parent/title_path/explain_for 推断
 
-输出：A1结构结果对象（nodes, edges, index_rows, stats）
+输出：结构化结果对象（nodes, edges, index_rows, stats）
 """
 import datetime as dt
 import json
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
-from docs_core.structured.title_level_refiner import llm_refine_title_levels
+from docs_core.structured.LLM_refiner_titles import resolve_title_level_refinement
 
 if TYPE_CHECKING:
     from angineer_core.infra.llm_client import LLMClient
@@ -833,23 +833,23 @@ class IndexRow:
 
 
 @dataclass
-class A1StructureResult:
-    """A1结构结果对象。"""
+class StructuredResult:
+    """结构化结果对象。"""
     nodes: List[Dict[str, Any]] = field(default_factory=list)
     edges: List[Dict[str, Any]] = field(default_factory=list)
     index_rows: List[Dict[str, Any]] = field(default_factory=list)
     stats: Dict[str, Any] = field(default_factory=dict)
 
 
-def build_a1_from_mineru(
+def build_structured_from_rawfiles(
     parsed_dir: Path,
     doc_id: str,
     doc_name: str = "",
     llm_client: Optional["LLMClient"] = None,
     options: Optional[Dict[str, Any]] = None
-) -> A1StructureResult:
+) -> StructuredResult:
     """
-    从 MinerU 解析结果构建 A1 结构对象。
+    从原始解析结果构建结构化对象。
     
     Args:
         parsed_dir: 解析结果目录，应包含 mineru_raw/ 子目录
@@ -861,7 +861,7 @@ def build_a1_from_mineru(
             - derive_version: 推导版本标识
     
     Returns:
-        A1StructureResult: 包含 nodes, edges, index_rows, stats
+        StructuredResult: 包含 nodes, edges, index_rows, stats
     """
     opts = options or {}
     use_llm = opts.get("use_llm", True)
@@ -876,7 +876,7 @@ def build_a1_from_mineru(
     model_media_candidates = build_model_media_candidate_map(model_payload)
     
     if not parsed_blocks:
-        return A1StructureResult(stats={"error": "no_parsed_blocks", "raw_dir": str(raw_dir)})
+        return StructuredResult(stats={"error": "no_parsed_blocks", "raw_dir": str(raw_dir)})
     
     ts = now_iso()
     rows: list[dict[str, Any]] = []
@@ -989,23 +989,12 @@ def build_a1_from_mineru(
                 "footnote_bboxes": media_bbox_info.get("footnote_bboxes"),
             })
     
-    title_candidates: list[dict[str, Any]] = []
-    for row in rows:
-        if row["block_type"] != "title":
-            continue
-        content = row["content_json"]
-        raw_level = content.get("level") if isinstance(content, dict) else None
-        rule_level, _, _ = infer_title_level(row["plain_text"] or "", raw_level)
-        title_candidates.append({
-            "block_uid": row["block_uid"],
-            "plain_text": row["plain_text"] or "",
-            "rule_level": rule_level
-        })
-    
-    llm_levels: dict[str, tuple[int, float]] = {}
-    llm_status = "disabled"
-    if use_llm and llm_client and title_candidates:
-        llm_levels, llm_status = llm_refine_title_levels(title_candidates, llm_client)
+    title_candidates, llm_levels, llm_status = resolve_title_level_refinement(
+        rows=rows,
+        infer_title_level_func=infer_title_level,
+        llm_client=llm_client,
+        use_llm=use_llm,
+    )
     
     toc_row_ids = detect_toc_row_ids(rows)
     toc_pages = {int(r["page_idx"]) for r in rows if int(r["id"]) in toc_row_ids}
@@ -1372,7 +1361,7 @@ def build_a1_from_mineru(
         "derived_rows": derived_rows,
     }
     
-    return A1StructureResult(
+    return StructuredResult(
         nodes=nodes,
         edges=edges,
         index_rows=index_rows,
@@ -1380,15 +1369,15 @@ def build_a1_from_mineru(
     )
 
 
-def build_graph_from_mineru(
+def build_graph_from_rawfiles(
     parsed_dir: Path,
     doc_id: str,
     doc_name: str = "",
     llm_client: Optional["LLMClient"] = None,
     options: Optional[Dict[str, Any]] = None
-) -> A1StructureResult:
-    """兼容旧命名，转调到 build_a1_from_mineru。"""
-    return build_a1_from_mineru(
+) -> StructuredResult:
+    """从原始解析结果构建结构化图结果。"""
+    return build_structured_from_rawfiles(
         parsed_dir=parsed_dir,
         doc_id=doc_id,
         doc_name=doc_name,
@@ -1397,9 +1386,9 @@ def build_graph_from_mineru(
     )
 
 
-class MinerUStructureBuilder:
+class RawFilesStructureBuilder:
     """
-    负责将 MinerU 的原始输出 (model.json, layout.json, content_list.json)
+    负责将原始输出 (model.json, layout.json, content_list.json)
     转换为标准化的 mineru_blocks.json 结构。
     
     算法核心 (A/B/C 融合):
@@ -1843,3 +1832,12 @@ class MinerUStructureBuilder:
             'parent_id': payload.get('parent_id'),
             'children': payload.get('children', [])
         }
+
+
+__all__ = [
+    "StructuredResult",
+    "RawFilesStructureBuilder",
+    "build_structured_from_rawfiles",
+    "build_graph_from_rawfiles",
+    "collect_media_related_block_refs",
+]

@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from docs_core.structured.mineru_to_a1 import A1StructureResult
+from docs_core.structured.rawfiles_to_structured import StructuredResult
 
 
 KNOWLEDGE_META_DB_NAME = "knowledge_meta.sqlite"
@@ -724,7 +724,7 @@ _index_store = KnowledgeIndexStore()
 
 
 # 持久化 doc_blocks 主索引。
-def persist_doc_blocks(result: A1StructureResult) -> Dict[str, int]:
+def persist_doc_blocks(result: StructuredResult) -> Dict[str, int]:
     base_rows = result.stats.get("base_rows", []) or []
     derived_rows = result.stats.get("derived_rows", []) or []
     doc_id = ""

@@ -4,16 +4,16 @@ import os
 import sys
 from pathlib import Path
 
-# Add docs-core to sys.path to allow importing MinerUStructureBuilder
+# Add docs-core to sys.path to allow importing RawFilesStructureBuilder
 current_dir = Path(__file__).parent
 project_root = current_dir.parent
 docs_core_path = project_root / 'services' / 'docs-core' / 'src'
 sys.path.insert(0, str(docs_core_path))
 
 try:
-    from docs_core.structured.mineru_to_a1 import MinerUStructureBuilder
+    from docs_core.structured.rawfiles_to_structured import RawFilesStructureBuilder
 except ImportError:
-    print("Error: Could not import MinerUStructureBuilder. Please ensure services/docs-core/src is in python path.")
+    print("Error: Could not import RawFilesStructureBuilder. Please ensure services/docs-core/src is in python path.")
     sys.exit(1)
 
 def verify_mineru_blocks():
@@ -55,8 +55,8 @@ def verify_mineru_blocks():
         print(f"  - Warning: Source C (Content List) not found")
 
     # 2. Generate Blocks using new Algorithm
-    print("\n[2] Generating Blocks using MinerUStructureBuilder...")
-    builder = MinerUStructureBuilder()
+    print("\n[2] Generating Blocks using RawFilesStructureBuilder...")
+    builder = RawFilesStructureBuilder()
     generated_blocks = builder.build(model_data, layout_data, content_list_data)
     print(f"  - Generated {len(generated_blocks)} blocks")
     

@@ -19,9 +19,9 @@ from docs_core.structured.result_store_json import (
     extract_structured_items_from_markdown,
     _build_a_structured_segment_items
 )
-from docs_core.structured.mineru_to_a1 import (
-    A1StructureResult,
-    build_a1_from_mineru,
+from docs_core.structured.rawfiles_to_structured import (
+    StructuredResult,
+    build_structured_from_rawfiles,
     collect_media_related_block_refs
 )
 
@@ -136,7 +136,7 @@ class TestStructuredSegments(unittest.TestCase):
     # 测试 A_structured 索引行会被转换为带精确定位元数据的结构化条目。
     def test_build_a_structured_segment_items_contains_exact_refs(self):
         """测试 A_structured 条目会输出 block_uid、node_id 等精确引用。"""
-        result = A1StructureResult(
+        result = StructuredResult(
             nodes=[
                 {
                     "id": "doc-1:0:3",
@@ -188,7 +188,7 @@ class TestStructuredSegments(unittest.TestCase):
 
     def test_build_a_structured_segment_items_contains_caption_and_footnote_refs(self):
         """测试图表条目会输出 caption 与 footnote 的显式 block_uid 引用。"""
-        result = A1StructureResult(
+        result = StructuredResult(
             nodes=[
                 {
                     "id": "doc-1:0:10",
@@ -295,8 +295,8 @@ class TestStructuredSegments(unittest.TestCase):
         self.assertEqual(refs["footnote_block_uids"], ["doc-1:0:12"])
 
     # 测试解析阶段会优先按顺序而非按文本把 model.json 的 bbox 对齐回来。
-    def test_build_a1_from_mineru_enriches_caption_and_footnote_bboxes(self):
-        """测试 build_a1_from_mineru 会优先按顺序把 model.json 中的图表题注 bbox 写入结果。"""
+    def test_build_structured_from_rawfiles_enriches_caption_and_footnote_bboxes(self):
+        """测试 build_structured_from_rawfiles 会优先按顺序把 model.json 中的图表题注 bbox 写入结果。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             parsed_dir = Path(temp_dir)
             raw_dir = parsed_dir / "mineru_raw"
@@ -372,7 +372,7 @@ class TestStructuredSegments(unittest.TestCase):
                 encoding="utf-8"
             )
 
-            result = build_a1_from_mineru(parsed_dir, "doc-test", "测试文档", llm_client=None, options={"use_llm": False})
+            result = build_structured_from_rawfiles(parsed_dir, "doc-test", "测试文档", llm_client=None, options={"use_llm": False})
 
             self.assertEqual(len(result.nodes), 3)
             table_node = next(node for node in result.nodes if node["block_type"] == "table")

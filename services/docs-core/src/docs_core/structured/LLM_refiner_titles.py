@@ -1,6 +1,6 @@
-"""标题层级 LLM 细化器。"""
+"""标题相关的 LLM 特殊细化能力。"""
 import json
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from angineer_core.infra.llm_client import LLMClient
@@ -63,3 +63,38 @@ def llm_refine_title_levels(
 
     except Exception as error:
         return {}, f"error:{str(error)[:50]}"
+
+
+def resolve_title_level_refinement(
+    rows: list[dict[str, Any]],
+    infer_title_level_func: Callable[[str, Any], tuple[Optional[int], float, str]],
+    llm_client: Optional["LLMClient"] = None,
+    use_llm: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, tuple[int, float]], str]:
+    """从结构化行中提取标题候选并执行标题层级 LLM 细化。"""
+    title_candidates: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("block_type") != "title":
+            continue
+        content = row.get("content_json")
+        raw_level = content.get("level") if isinstance(content, dict) else None
+        rule_level, _, _ = infer_title_level_func(str(row.get("plain_text") or ""), raw_level)
+        title_candidates.append(
+            {
+                "block_uid": row["block_uid"],
+                "plain_text": str(row.get("plain_text") or ""),
+                "rule_level": rule_level,
+            }
+        )
+
+    llm_levels: dict[str, tuple[int, float]] = {}
+    llm_status = "disabled"
+    if use_llm and llm_client and title_candidates:
+        llm_levels, llm_status = llm_refine_title_levels(title_candidates, llm_client)
+    return title_candidates, llm_levels, llm_status
+
+
+__all__ = [
+    "llm_refine_title_levels",
+    "resolve_title_level_refinement",
+]
