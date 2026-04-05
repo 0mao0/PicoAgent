@@ -124,6 +124,25 @@ class KnowledgeStructuredIndexRequest(BaseModel):
 class KnowledgeDocumentUpdate(BaseModel):
     content: str
 
+
+class KnowledgeDocumentBlockUpdate(BaseModel):
+    plain_text: Optional[str] = None
+    math_content: Optional[str] = None
+    table_html: Optional[str] = None
+    title: Optional[str] = None
+    caption: Optional[str] = None
+    footnote: Optional[str] = None
+    parent_block_uid: Optional[str] = None
+    derived_title_level: Optional[int] = None
+    merge_into_block_uid: Optional[str] = None
+
+
+class KnowledgeDocumentBatchBlockOperation(BaseModel):
+    operation: str
+    blockIds: List[str]
+    targetBlockId: Optional[str] = None
+    splitSegments: Optional[List[Dict[str, Any]]] = None
+
 # AI Chat 对话相关模型
 class ChatMessage(BaseModel):
     """聊天消息"""
@@ -1373,6 +1392,95 @@ def update_document(library_id: str, doc_id: str, request: KnowledgeDocumentUpda
     return {"status": "success", "path": saved_path, "storage": file_storage.get_doc_manifest(library_id, doc_id)}
 
 
+@app.patch("/api/knowledge/document/{library_id}/{doc_id}/blocks/{block_id}")
+def update_document_block(
+    library_id: str,
+    doc_id: str,
+    block_id: str,
+    request: KnowledgeDocumentBlockUpdate,
+):
+    """更新文档结构节点内容"""
+    from docs_core.structured.result_store_json import update_doc_block_content
+
+    changes = request.dict(exclude_unset=True)
+    try:
+        result = update_doc_block_content(library_id, doc_id, block_id, changes)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "status": "success",
+        "doc_id": doc_id,
+        "block_id": result["block_id"],
+        "updated_fields": result["updated_fields"],
+        "node": result["node"],
+        "storage": result["graph_path"],
+    }
+
+
+@app.post("/api/knowledge/document/{library_id}/{doc_id}/blocks/batch")
+def batch_operate_document_blocks(
+    library_id: str,
+    doc_id: str,
+    request: KnowledgeDocumentBatchBlockOperation,
+):
+    """批量执行文档结构节点操作"""
+    from docs_core.structured.result_store_json import batch_operate_doc_blocks
+
+    payload = request.dict(exclude_unset=True)
+    try:
+        result = batch_operate_doc_blocks(library_id, doc_id, request.operation, payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "status": "success",
+        "doc_id": doc_id,
+        "operation": result["operation"],
+        "block_ids": result["block_ids"],
+        "target_block_id": result.get("target_block_id"),
+        "created_block_ids": result.get("created_block_ids") or [],
+        "removed_block_ids": result.get("removed_block_ids") or [],
+        "saved_segments": result["saved_segments"],
+        "storage": result["graph_path"],
+    }
+
+
+@app.post("/api/knowledge/document/{library_id}/{doc_id}/blocks/undo")
+def undo_document_block_operation(library_id: str, doc_id: str):
+    """撤回当前文档最近一次可回滚的结构操作"""
+    from docs_core.structured.result_store_json import undo_last_doc_block_operation
+
+    try:
+        result = undo_last_doc_block_operation(library_id, doc_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "status": "success",
+        "doc_id": doc_id,
+        "restored_block_ids": result["restored_block_ids"],
+        "saved_segments": result["saved_segments"],
+        "storage": result["graph_path"],
+    }
+
+
+@app.post("/api/knowledge/document/{library_id}/{doc_id}/blocks/merge/undo")
+def undo_document_block_merge(library_id: str, doc_id: str):
+    """兼容旧路由，撤回当前文档最近一次结构操作"""
+    return undo_document_block_operation(library_id, doc_id)
+
+
 @app.get("/api/knowledge/storage/{library_id}/{doc_id}")
 def get_document_storage(library_id: str, doc_id: str):
     """获取文档存储布局"""
@@ -1383,13 +1491,6 @@ def get_document_storage(library_id: str, doc_id: str):
         raise HTTPException(status_code=404, detail="Document not found")
     return {"library_id": library_id, "doc_id": doc_id, "storage": file_storage.get_doc_manifest(library_id, doc_id)}
 
-
-@app.post("/api/knowledge/storage/reorganize")
-def reorganize_storage():
-    """触发存储目录标准化"""
-    from docs_core.structured.result_store_json import file_storage
-    file_storage.reorganize_storage()
-    return {"status": "success"}
 
 if __name__ == "__main__":
     import uvicorn

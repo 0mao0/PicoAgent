@@ -200,6 +200,16 @@ def matches_related_text(row_text: str, needles: list[str]) -> bool:
     )
 
 
+def is_struct_heading_candidate(block_type: str, text: str) -> bool:
+    """判断候选块是否更像结构标题而非图表题注或脚注。"""
+    normalized_type = str(block_type or "").strip().lower()
+    if normalized_type == "title":
+        return True
+    if normalized_type not in {"paragraph", "list", "list_item"}:
+        return False
+    return infer_struct_level(text) is not None
+
+
 def collect_media_related_block_refs(row: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, list[str]]:
     """为图表块收集同页 caption 与 footnote 的关联 block_uid。"""
     block_type = str(row.get("block_type") or "").strip().lower()
@@ -230,9 +240,12 @@ def collect_media_related_block_refs(row: dict[str, Any], rows: list[dict[str, A
         candidate_type = str(candidate.get("block_type") or candidate.get("type") or "").strip().lower()
         if candidate_type in excluded_types:
             continue
-        candidate_text = normalize_match_text(str(candidate.get("plain_text") or candidate.get("text") or "").strip())
-        if not candidate_text:
+        candidate_text_raw = str(candidate.get("plain_text") or candidate.get("text") or "").strip()
+        if not candidate_text_raw:
             continue
+        if is_struct_heading_candidate(candidate_type, candidate_text_raw):
+            continue
+        candidate_text = normalize_match_text(candidate_text_raw)
         if caption_needles and matches_related_text(candidate_text, caption_needles):
             caption_refs.append(candidate_uid)
         if footnote_needles and matches_related_text(candidate_text, footnote_needles):

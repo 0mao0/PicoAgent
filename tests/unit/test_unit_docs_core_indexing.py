@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import gc
+import json
 from pathlib import Path
 
 
@@ -14,10 +15,14 @@ sys.path.insert(0, str(PROJECT_ROOT / "services" / "docs-core" / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "apps" / "api-server"))
 
 from docs_core.structured.result_store_json import FileStorage
+import docs_core.structured.result_store_json as result_store_json_module
+import docs_core.knowledge_service as knowledge_service_module
 from docs_core.knowledge_service import KnowledgeService, KnowledgeNode
 from docs_core.structured.result_store_json import (
     extract_structured_items_from_markdown,
-    _build_a_structured_segment_items
+    _build_a_structured_segment_items,
+    batch_operate_doc_blocks,
+    undo_last_doc_block_merge,
 )
 from docs_core.structured.rawfiles_to_structured import (
     StructuredResult,
@@ -294,6 +299,37 @@ class TestStructuredSegments(unittest.TestCase):
         self.assertEqual(refs["caption_block_uids"], ["doc-1:0:11"])
         self.assertEqual(refs["footnote_block_uids"], ["doc-1:0:12"])
 
+    def test_collect_media_related_block_refs_excludes_struct_heading_rows(self):
+        """测试图表关联匹配不会把结构标题误识别为脚注引用。"""
+        rows = [
+            {
+                "block_uid": "doc-1:0:20",
+                "block_type": "image",
+                "page_idx": 0,
+                "content_json": {
+                    "image_caption": [{"content": "图6.4.1 航道设计基本尺度"}],
+                    "image_footnote": [{"content": "6.4.2 航道通航宽度应由航迹带宽度确定"}]
+                }
+            },
+            {
+                "block_uid": "doc-1:0:21",
+                "block_type": "title",
+                "page_idx": 0,
+                "plain_text": "6.4.2 航道通航宽度应由航迹带宽度确定"
+            },
+            {
+                "block_uid": "doc-1:0:22",
+                "block_type": "paragraph",
+                "page_idx": 0,
+                "plain_text": "6.4.2 航道通航宽度应由航迹带宽度确定"
+            }
+        ]
+
+        refs = collect_media_related_block_refs(rows[0], rows)
+
+        self.assertNotIn("caption_block_uids", refs)
+        self.assertNotIn("footnote_block_uids", refs)
+
     # 测试解析阶段会优先按顺序而非按文本把 model.json 的 bbox 对齐回来。
     def test_build_structured_from_rawfiles_enriches_caption_and_footnote_bboxes(self):
         """测试 build_structured_from_rawfiles 会优先按顺序把 model.json 中的图表题注 bbox 写入结果。"""
@@ -415,6 +451,317 @@ class TestMarkdownExtractor(unittest.TestCase):
         self.assertIn("clause", types)
         self.assertIn("table", types)
         self.assertIn("image", types)
+
+
+class TestStructuredBatchOperations(unittest.TestCase):
+    """测试结构化批量编辑操作。"""
+
+    def test_batch_merge_split_delete_and_undo_blocks(self):
+        """测试批量合并、拆分、删除与撤回会同步图谱与结构化投影。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "knowledge_meta.sqlite"
+            isolated_service = IsolatedKnowledgeService(db_path)
+            isolated_storage = FileStorage(base_dir=temp_dir)
+            previous_service = knowledge_service_module.knowledge_service
+            previous_storage = result_store_json_module.file_storage
+            knowledge_service_module.knowledge_service = isolated_service
+            result_store_json_module.file_storage = isolated_storage
+            try:
+                node = KnowledgeNode(
+                    id="doc-batch-1",
+                    title="批量结构操作测试",
+                    type="document",
+                    library_id="default",
+                    status="completed"
+                )
+                isolated_service.create_node(node)
+                graph_data = {
+                    "doc_id": "doc-batch-1",
+                    "doc_name": "批量结构操作测试",
+                    "nodes": [
+                        {
+                            "id": "doc-batch-1:0:1",
+                            "block_uid": "doc-batch-1:0:1",
+                            "block_type": "title",
+                            "page_idx": 0,
+                            "block_seq": 1,
+                            "plain_text": "第一章",
+                            "bbox": [0.0, 0.0, 1.0, 0.1],
+                            "bbox_source": "layout",
+                            "derived_level": 1,
+                            "title_path": "doc-batch-1:0:1",
+                            "parent_uid": None,
+                            "derived_by": "rule",
+                            "confidence": 0.98,
+                            "content_json": {},
+                        },
+                        {
+                            "id": "doc-batch-1:0:2",
+                            "block_uid": "doc-batch-1:0:2",
+                            "block_type": "image",
+                            "page_idx": 0,
+                            "block_seq": 2,
+                            "plain_text": "段落一",
+                            "bbox": [0.0, 0.1, 1.0, 0.2],
+                            "bbox_source": "layout",
+                            "derived_level": None,
+                            "title_path": "doc-batch-1:0:1",
+                            "parent_uid": "doc-batch-1:0:1",
+                            "derived_by": "rule",
+                            "confidence": 0.91,
+                            "caption": "图注一",
+                            "footnote": "脚注一",
+                            "image_path": "assets/img-a.png",
+                            "caption_block_uids": ["doc-batch-1:0:4"],
+                            "caption_bboxes": [[0.05, 0.08, 0.4, 0.1]],
+                            "footnote_block_uids": ["doc-batch-1:0:5"],
+                            "footnote_bboxes": [[0.05, 0.2, 0.45, 0.24]],
+                            "content_json": {
+                                "image_caption": [{"content": "图注一"}],
+                                "image_footnote": [{"content": "脚注一"}],
+                            },
+                        },
+                        {
+                            "id": "doc-batch-1:0:3",
+                            "block_uid": "doc-batch-1:0:3",
+                            "block_type": "image",
+                            "page_idx": 0,
+                            "block_seq": 3,
+                            "plain_text": "段落二",
+                            "bbox": [0.0, 0.2, 1.0, 0.3],
+                            "bbox_source": "layout",
+                            "derived_level": None,
+                            "title_path": "doc-batch-1:0:1",
+                            "parent_uid": "doc-batch-1:0:1",
+                            "derived_by": "rule",
+                            "confidence": 0.9,
+                            "caption": "图注二",
+                            "footnote": "脚注二",
+                            "image_path": "assets/img-b.png",
+                            "caption_block_uids": ["doc-batch-1:0:6"],
+                            "caption_bboxes": [[0.06, 0.28, 0.42, 0.31]],
+                            "footnote_block_uids": ["doc-batch-1:0:7"],
+                            "footnote_bboxes": [[0.06, 0.31, 0.46, 0.34]],
+                            "content_json": {
+                                "image_caption": [{"content": "图注二"}],
+                                "image_footnote": [{"content": "脚注二"}],
+                            },
+                        },
+                        {
+                            "id": "doc-batch-1:1:1",
+                            "block_uid": "doc-batch-1:1:1",
+                            "block_type": "title",
+                            "page_idx": 1,
+                            "block_seq": 1,
+                            "plain_text": "第二章",
+                            "bbox": [0.0, 0.0, 1.0, 0.1],
+                            "bbox_source": "layout",
+                            "derived_level": 1,
+                            "title_path": "doc-batch-1:1:1",
+                            "parent_uid": None,
+                            "derived_by": "rule",
+                            "confidence": 0.97,
+                            "content_json": {},
+                        },
+                    ],
+                    "edges": [],
+                    "stats": {
+                        "base_rows": [],
+                        "derived_rows": [],
+                        "index_rows": [],
+                    },
+                }
+                result_store_json_module._rebuild_graph_projection(graph_data)
+                graph_path = isolated_storage.get_graph_path("default", "doc-batch-1")
+                graph_path.write_text(json.dumps(graph_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+                merge_result = batch_operate_doc_blocks(
+                    "default",
+                    "doc-batch-1",
+                    "merge",
+                    {
+                        "operation": "merge",
+                        "blockIds": ["doc-batch-1:0:2", "doc-batch-1:0:3"],
+                        "targetBlockId": "doc-batch-1:0:2",
+                    },
+                )
+                self.assertEqual(merge_result["removed_block_ids"], ["doc-batch-1:0:3"])
+                self.assertEqual(merge_result["target_block_id"], "doc-batch-1:0:2")
+
+                merged_graph = result_store_json_module.get_doc_blocks_graph("default", "doc-batch-1")
+                self.assertIsNotNone(merged_graph)
+                merged_node_map = {
+                    node["block_uid"]: node
+                    for node in merged_graph["nodes"]
+                    if int(node.get("is_active", 1) or 0) != 0
+                }
+                merged_target = merged_node_map["doc-batch-1:0:2"]
+                self.assertEqual(merged_target["plain_text"], "段落一\n段落二")
+                self.assertEqual(merged_target["caption"], "图注一\n图注二")
+                self.assertEqual(merged_target["footnote"], "脚注一\n脚注二")
+                self.assertEqual(merged_target["image_path"], "assets/img-a.png")
+                self.assertEqual(merged_target["image_paths"], ["assets/img-a.png", "assets/img-b.png"])
+                self.assertEqual(
+                    merged_target["caption_block_uids"],
+                    ["doc-batch-1:0:4", "doc-batch-1:0:6"],
+                )
+                self.assertEqual(
+                    merged_target["footnote_block_uids"],
+                    ["doc-batch-1:0:5", "doc-batch-1:0:7"],
+                )
+                self.assertEqual(
+                    merged_target["caption_bboxes"],
+                    [
+                        [0.05, 0.08, 0.4, 0.1],
+                        [0.06, 0.28, 0.42, 0.31],
+                    ],
+                )
+                self.assertEqual(
+                    merged_target["footnote_bboxes"],
+                    [
+                        [0.05, 0.2, 0.45, 0.24],
+                        [0.06, 0.31, 0.46, 0.34],
+                    ],
+                )
+                self.assertEqual(
+                    merged_target["content_json"]["image_caption"],
+                    [{"content": "图注一"}, {"content": "图注二"}],
+                )
+                self.assertEqual(merged_target["bbox"], [0.0, 0.1, 1.0, 0.2])
+                self.assertEqual(
+                    merged_target["merged_bboxes"],
+                    [
+                        [0.0, 0.1, 1.0, 0.2],
+                        [0.0, 0.2, 1.0, 0.3],
+                    ],
+                )
+                self.assertEqual(
+                    merged_target["merged_block_uids"],
+                    ["doc-batch-1:0:2", "doc-batch-1:0:3"],
+                )
+
+                split_result = batch_operate_doc_blocks(
+                    "default",
+                    "doc-batch-1",
+                    "split",
+                    {
+                        "operation": "split",
+                        "blockIds": ["doc-batch-1:0:2"],
+                        "splitSegments": [
+                            {"plain_text": "段落一"},
+                            {"plain_text": "段落二"},
+                            {"plain_text": "段落三"},
+                        ],
+                    },
+                )
+                self.assertEqual(len(split_result["created_block_ids"]), 2)
+
+                latest_graph = result_store_json_module.get_doc_blocks_graph("default", "doc-batch-1")
+                self.assertIsNotNone(latest_graph)
+                latest_node_map = {
+                    node["block_uid"]: node
+                    for node in latest_graph["nodes"]
+                    if int(node.get("is_active", 1) or 0) != 0
+                }
+                self.assertNotIn("doc-batch-1:0:3", latest_node_map)
+                self.assertEqual(latest_node_map["doc-batch-1:0:2"]["page_idx"], 0)
+                self.assertEqual(latest_node_map["doc-batch-1:0:2"]["parent_uid"], "doc-batch-1:0:1")
+                self.assertEqual(latest_node_map[split_result["created_block_ids"][0]]["page_idx"], 0)
+                self.assertEqual(latest_node_map[split_result["created_block_ids"][1]]["page_idx"], 0)
+                self.assertEqual(latest_node_map["doc-batch-1:0:2"]["plain_text"], "段落一")
+                self.assertEqual(latest_node_map[split_result["created_block_ids"][0]]["plain_text"], "段落二")
+                self.assertEqual(latest_node_map[split_result["created_block_ids"][1]]["plain_text"], "段落三")
+                self.assertEqual(latest_node_map[split_result["created_block_ids"][0]]["block_type"], "paragraph")
+                self.assertEqual(latest_node_map[split_result["created_block_ids"][1]]["block_type"], "paragraph")
+                self.assertIsNone(latest_node_map[split_result["created_block_ids"][0]].get("image_path"))
+                self.assertIsNone(latest_node_map[split_result["created_block_ids"][1]].get("image_path"))
+                self.assertEqual(latest_node_map[split_result["created_block_ids"][0]].get("content_json"), {})
+                self.assertEqual(latest_node_map[split_result["created_block_ids"][1]].get("content_json"), {})
+                ordered_block_uids = [
+                    node["block_uid"]
+                    for node in latest_graph["nodes"]
+                    if int(node.get("is_active", 1) or 0) != 0
+                ]
+                split_anchor_index = ordered_block_uids.index("doc-batch-1:0:2")
+                self.assertEqual(
+                    ordered_block_uids[split_anchor_index:split_anchor_index + 3],
+                    ["doc-batch-1:0:2", *split_result["created_block_ids"]],
+                )
+
+                projected_rows = isolated_service.index_store.query_doc_blocks("doc-batch-1", limit=20)
+                projected_uids = {row["block_uid"] for row in projected_rows}
+                self.assertIn(split_result["created_block_ids"][0], projected_uids)
+                self.assertIn(split_result["created_block_ids"][1], projected_uids)
+                self.assertNotIn("doc-batch-1:0:3", projected_uids)
+
+                projected_segments = isolated_service.list_document_segments("doc-batch-1", "A_structured")
+                segment_uids = {item["meta"]["block_uid"] for item in projected_segments}
+                self.assertIn(split_result["created_block_ids"][0], segment_uids)
+                self.assertIn(split_result["created_block_ids"][1], segment_uids)
+
+                delete_result = batch_operate_doc_blocks(
+                    "default",
+                    "doc-batch-1",
+                    "delete",
+                    {
+                        "operation": "delete",
+                        "blockIds": [split_result["created_block_ids"][0]],
+                    },
+                )
+                self.assertEqual(delete_result["removed_block_ids"], [split_result["created_block_ids"][0]])
+
+                deleted_graph = result_store_json_module.get_doc_blocks_graph("default", "doc-batch-1")
+                self.assertIsNotNone(deleted_graph)
+                deleted_node_map = {
+                    node["block_uid"]: node
+                    for node in deleted_graph["nodes"]
+                    if int(node.get("is_active", 1) or 0) != 0
+                }
+                self.assertNotIn(split_result["created_block_ids"][0], deleted_node_map)
+
+                undo_delete_result = undo_last_doc_block_merge("default", "doc-batch-1")
+                self.assertIn(split_result["created_block_ids"][0], undo_delete_result["restored_block_ids"])
+
+                restored_after_delete_graph = result_store_json_module.get_doc_blocks_graph("default", "doc-batch-1")
+                self.assertIsNotNone(restored_after_delete_graph)
+                restored_after_delete_node_map = {
+                    node["block_uid"]: node
+                    for node in restored_after_delete_graph["nodes"]
+                    if int(node.get("is_active", 1) or 0) != 0
+                }
+                self.assertIn(split_result["created_block_ids"][0], restored_after_delete_node_map)
+
+                undo_split_result = undo_last_doc_block_merge("default", "doc-batch-1")
+                self.assertTrue(undo_split_result["restored_block_ids"])
+
+                restored_merge_graph = result_store_json_module.get_doc_blocks_graph("default", "doc-batch-1")
+                self.assertIsNotNone(restored_merge_graph)
+                restored_merge_node_map = {
+                    node["block_uid"]: node
+                    for node in restored_merge_graph["nodes"]
+                    if int(node.get("is_active", 1) or 0) != 0
+                }
+                self.assertNotIn("doc-batch-1:0:3", restored_merge_node_map)
+                self.assertEqual(restored_merge_node_map["doc-batch-1:0:2"]["image_path"], "assets/img-a.png")
+
+                undo_merge_result = undo_last_doc_block_merge("default", "doc-batch-1")
+                self.assertTrue(undo_merge_result["restored_block_ids"])
+
+                restored_graph = result_store_json_module.get_doc_blocks_graph("default", "doc-batch-1")
+                self.assertIsNotNone(restored_graph)
+                restored_node_map = {
+                    node["block_uid"]: node
+                    for node in restored_graph["nodes"]
+                    if int(node.get("is_active", 1) or 0) != 0
+                }
+                self.assertIn("doc-batch-1:0:3", restored_node_map)
+                self.assertEqual(restored_node_map["doc-batch-1:0:2"]["image_path"], "assets/img-a.png")
+                self.assertEqual(restored_node_map["doc-batch-1:0:3"]["image_path"], "assets/img-b.png")
+            finally:
+                knowledge_service_module.knowledge_service = previous_service
+                result_store_json_module.file_storage = previous_storage
+                del isolated_service
+                gc.collect()
 
 
 if __name__ == "__main__":

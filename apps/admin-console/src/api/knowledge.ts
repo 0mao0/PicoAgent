@@ -3,6 +3,8 @@ import type {
   KnowledgeStrategy,
   ParseTaskInfo,
   StructuredIndexItem,
+  StructuredNodeUpdatePayload,
+  StructuredBatchOperationPayload,
   StructuredStats,
   DocumentStorageManifest
 } from '@angineer/docs-ui'
@@ -24,6 +26,30 @@ interface DocumentResponse {
   storage: DocumentStorageManifest
   mineru_blocks?: Record<string, any>[]
   middle_data?: Record<string, any> | null
+  graph_data?: { nodes: Record<string, any>[]; edges: Record<string, any>[] } | null
+}
+
+interface StructuredNodeUpdateResponse {
+  doc_id: string
+  block_id: string
+  updated_fields: string[]
+  node: Record<string, any>
+}
+
+interface StructuredBatchOperationResponse {
+  doc_id: string
+  operation: string
+  block_ids: string[]
+  target_block_id?: string | null
+  created_block_ids?: string[]
+  removed_block_ids?: string[]
+  saved_segments: number
+}
+
+interface UndoStructuredOperationResponse {
+  doc_id: string
+  restored_block_ids: string[]
+  saved_segments: number
 }
 
 api.interceptors.request.use(config => {
@@ -101,13 +127,18 @@ export const knowledgeApi = {
     api.get(`/knowledge/document/${libraryId}/${docId}`) as Promise<DocumentResponse>,
   updateDocument: (libraryId: string, docId: string, content: string) => 
     api.put(`/knowledge/document/${libraryId}/${docId}`, { content }),
+  updateDocumentBlock: (libraryId: string, docId: string, payload: StructuredNodeUpdatePayload) =>
+    api.patch(`/knowledge/document/${libraryId}/${docId}/blocks/${encodeURIComponent(payload.blockId)}`, payload) as Promise<StructuredNodeUpdateResponse>,
+  batchOperateDocumentBlocks: (libraryId: string, docId: string, payload: StructuredBatchOperationPayload) =>
+    api.post(`/knowledge/document/${libraryId}/${docId}/blocks/batch`, payload) as Promise<StructuredBatchOperationResponse>,
+  undoLastDocumentBlockOperation: (libraryId: string, docId: string) =>
+    api.post(`/knowledge/document/${libraryId}/${docId}/blocks/undo`) as Promise<UndoStructuredOperationResponse>,
   getDocumentStorage: (libraryId: string, docId: string) =>
     api.get(`/knowledge/storage/${libraryId}/${docId}`) as Promise<{
       library_id: string
       doc_id: string
       storage: DocumentStorageManifest
     }>,
-  reorganizeStorage: () => api.post('/knowledge/storage/reorganize'),
 
   // 文档块图谱
   getDocBlocksGraph: (libraryId: string, docId: string) =>

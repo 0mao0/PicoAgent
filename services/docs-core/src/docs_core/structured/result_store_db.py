@@ -413,6 +413,24 @@ class KnowledgeIndexStore:
                 ON document_segments (doc_id, strategy, item_type, order_index)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS doc_block_corrections (
+                    id TEXT PRIMARY KEY,
+                    doc_id TEXT NOT NULL,
+                    block_uid TEXT NOT NULL,
+                    operation_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_doc_block_corrections_doc_block
+                ON doc_block_corrections(doc_id, block_uid, created_at)
+                """
+            )
             conn.commit()
 
     # 删除指定文档或策略下的片段投影。
@@ -472,6 +490,139 @@ class KnowledgeIndexStore:
             )
             conn.commit()
             return len(rows)
+
+    # 更新单个文档块的可编辑字段。
+    def update_doc_block_fields(self, doc_id: str, block_uid: str, changes: Dict[str, Any]) -> int:
+        column_map = {
+            "plain_text": "plain_text",
+            "table_html": "table_html",
+            "math_content": "math_content",
+            "title": "title_path",
+            "title_path": "title_path",
+            "parent_block_uid": "parent_block_uid",
+            "derived_title_level": "derived_title_level",
+            "is_active": "is_active",
+        }
+        assignments = []
+        values: List[Any] = []
+        for key, column in column_map.items():
+            if key in changes:
+                assignments.append(f"{column} = ?")
+                values.append(changes.get(key))
+        if not assignments:
+            return 0
+        assignments.append("updated_at = ?")
+        values.append(datetime.now().isoformat())
+        values.extend([doc_id, block_uid])
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE doc_blocks
+                SET {", ".join(assignments)}
+                WHERE doc_id = ? AND block_uid = ?
+                """,
+                values,
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
+    # 批量改写指定父节点下的子节点归属。
+    def reparent_doc_blocks(self, doc_id: str, source_parent_uid: str, target_parent_uid: Optional[str]) -> int:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE doc_blocks
+                SET parent_block_uid = ?, updated_at = ?
+                WHERE doc_id = ? AND parent_block_uid = ?
+                """,
+                (target_parent_uid, datetime.now().isoformat(), doc_id, source_parent_uid),
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
+    # 记录块级结构纠错操作。
+    def record_doc_block_correction(
+        self,
+        doc_id: str,
+        block_uid: str,
+        operation_type: str,
+        payload: Dict[str, Any],
+    ) -> str:
+        record_id = f"dbcorr-{uuid.uuid4().hex[:16]}"
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO doc_block_corrections (
+                    id, doc_id, block_uid, operation_type, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record_id,
+                    doc_id,
+                    block_uid,
+                    operation_type,
+                    json.dumps(payload, ensure_ascii=False),
+                    datetime.now().isoformat(),
+                ),
+            )
+            conn.commit()
+        return record_id
+
+    # 查询指定文档最新的一条块级结构纠错记录。
+    def get_latest_doc_block_correction(
+        self,
+        doc_id: str,
+        operation_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            if operation_type:
+                cursor = conn.execute(
+                    """
+                    SELECT id, doc_id, block_uid, operation_type, payload_json, created_at
+                    FROM doc_block_corrections
+                    WHERE doc_id = ? AND operation_type = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (doc_id, operation_type),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT id, doc_id, block_uid, operation_type, payload_json, created_at
+                    FROM doc_block_corrections
+                    WHERE doc_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (doc_id,),
+                )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        payload_json = row["payload_json"] if isinstance(row, sqlite3.Row) else row[4]
+        try:
+            payload = json.loads(payload_json) if payload_json else {}
+        except Exception:
+            payload = {}
+        return {
+            "id": row["id"] if isinstance(row, sqlite3.Row) else row[0],
+            "doc_id": row["doc_id"] if isinstance(row, sqlite3.Row) else row[1],
+            "block_uid": row["block_uid"] if isinstance(row, sqlite3.Row) else row[2],
+            "operation_type": row["operation_type"] if isinstance(row, sqlite3.Row) else row[3],
+            "payload": payload,
+            "created_at": row["created_at"] if isinstance(row, sqlite3.Row) else row[5],
+        }
+
+    # 删除指定 ID 的块级结构纠错记录。
+    def delete_doc_block_correction(self, record_id: str) -> int:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM doc_block_corrections WHERE id = ?",
+                (record_id,),
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0)
 
     # 清空指定文档的块索引。
     def clear_doc_blocks(self, doc_id: str) -> int:

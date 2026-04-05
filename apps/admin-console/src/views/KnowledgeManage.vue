@@ -109,17 +109,14 @@
               :content="docContent"
               :structured-stats="structuredStats"
               :structured-items="structuredItems"
-              :ingest-status="ingestStatus"
-              :ingest-progress="ingestProgress"
-              :ingest-stage="ingestStage"
               :dark-mode="isDark"
               :graph-data="graphData"
+              :on-update-structured-node="updateStructuredNode"
+              :on-batch-structured-operation="batchOperateStructuredNodes"
+              :on-undo-last-operation="undoLastStructuredOperation"
               @parse="parseDocument"
               @toggle-visible="toggleVisible"
-              @save-content="saveDocumentContent"
-              @change-strategy="changeDocumentStrategy"
               @query-structured="loadStructuredIndex"
-              @rebuild-structured="rebuildStructuredIndex"
             />
           </template>
         </Panel>
@@ -169,7 +166,7 @@
 /**
  * 知识库管理页面 - 使用 AIChat 组件进行 AI 对话
  */
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   FolderOutlined,
@@ -193,6 +190,8 @@ import {
   type KnowledgeStrategy,
   type ParseTaskInfo,
   type StructuredIndexItem,
+  type StructuredBatchOperationPayload,
+  type StructuredNodeUpdatePayload,
   type StructuredStats,
   getPreviewFileType,
   mapNodeStatusText,
@@ -245,12 +244,8 @@ const panelRatios = ref({
 
 // 面板尺寸状态
 const parsePollTimer = ref<number | null>(null)
-const ingestProgressTimer = ref<number | null>(null)
 const structuredStats = ref<StructuredStats>({})
 const structuredItems = ref<StructuredIndexItem[]>([])
-const ingestStatus = ref<'idle' | 'processing' | 'completed' | 'failed'>('idle')
-const ingestProgress = ref(0)
-const ingestStage = ref('')
 const graphData = ref<{ nodes: any[]; edges: any[] } | null>(null)
 
 // 弹窗状态
@@ -511,31 +506,6 @@ const loadStructuredIndex = async (itemType?: string, keyword?: string) => {
   }
 }
 
-const resetIngestState = () => {
-  ingestStatus.value = 'idle'
-  ingestProgress.value = 0
-  ingestStage.value = ''
-  if (ingestProgressTimer.value) {
-    window.clearInterval(ingestProgressTimer.value)
-    ingestProgressTimer.value = null
-  }
-}
-
-const startIngestProgress = () => {
-  resetIngestState()
-  ingestStatus.value = 'processing'
-  ingestProgress.value = 8
-  ingestStage.value = '正在提交入库任务'
-  ingestProgressTimer.value = window.setInterval(() => {
-    if (ingestProgress.value >= 90) return
-    const step = ingestProgress.value < 60 ? 8 : 3
-    ingestProgress.value = Math.min(90, ingestProgress.value + step)
-    if (ingestProgress.value < 40) ingestStage.value = '正在预处理文档内容'
-    else if (ingestProgress.value < 75) ingestStage.value = '正在写入索引数据'
-    else ingestStage.value = '正在校验入库结果'
-  }, 600)
-}
-
 // 显示新建文件夹弹窗
 const showCreateFolderModal = () => {
   folderForm.value = { name: '', parentId: undefined, isNew: true, nodeId: '' }
@@ -643,7 +613,6 @@ const showDocDetail = (node: SmartTreeNode) => {
 // 解析文档
 const parseDocument = async (node: SmartTreeNode) => {
   try {
-    resetIngestState()
     if (selectedNode.value && selectedNode.value.key === node.key) {
       selectedNode.value.status = 'processing'
       selectedNode.value.parseError = ''
@@ -663,65 +632,73 @@ const parseDocument = async (node: SmartTreeNode) => {
   }
 }
 
-const saveDocumentContent = async (content: string) => {
+/* 更新单个结构节点并刷新当前文档的索引数据。 */
+const updateStructuredNode = async (payload: StructuredNodeUpdatePayload) => {
   if (!selectedNode.value || selectedNode.value.isFolder) return
   try {
-    await knowledgeApi.updateDocument('default', selectedNode.value.key, content)
-    docContent.value = content
-    message.success('保存成功')
-  } catch (error) {
-    message.error('保存失败')
-  }
-}
-
-const changeDocumentStrategy = async (strategy: KnowledgeStrategy) => {
-  if (!selectedNode.value || selectedNode.value.isFolder) return
-  try {
-    await knowledgeApi.setDocStrategy(selectedNode.value.key, strategy)
-    selectedNode.value.strategy = strategy
-    message.success('入库方式已切换')
-    await loadStructuredStats(selectedNode.value.key)
-    await loadStructuredIndex()
-  } catch (error) {
-    message.error('策略更新失败')
-  }
-}
-
-const rebuildStructuredIndex = async (strategy?: KnowledgeStrategy) => {
-  if (!selectedNode.value || selectedNode.value.isFolder) return
-  const strategyToUse = strategy || (selectedNode.value.strategy as KnowledgeStrategy | undefined)
-  if (!strategyToUse) {
-    message.warning('请先选择入库方式')
-    return
-  }
-  try {
-    if (selectedNode.value.strategy !== strategyToUse) {
-      await knowledgeApi.setDocStrategy(selectedNode.value.key, strategyToUse)
-      selectedNode.value.strategy = strategyToUse
-    }
-    startIngestProgress()
-    await knowledgeApi.buildStructuredIndex('default', selectedNode.value.key, strategyToUse)
-    if (ingestProgressTimer.value) {
-      window.clearInterval(ingestProgressTimer.value)
-      ingestProgressTimer.value = null
-    }
-    ingestStatus.value = 'completed'
-    ingestProgress.value = 100
-    ingestStage.value = '入库完成'
-    await loadStructuredStats(selectedNode.value.key)
-    await loadStructuredIndex()
+    await knowledgeApi.updateDocumentBlock('default', selectedNode.value.key, payload)
     await loadDocContent(selectedNode.value.key)
-    message.success('入库完成')
+    await loadStructuredStats(selectedNode.value.key)
+    await loadStructuredIndex()
+    message.success('节点内容已更新')
   } catch (error) {
-    if (ingestProgressTimer.value) {
-      window.clearInterval(ingestProgressTimer.value)
-      ingestProgressTimer.value = null
-    }
-    ingestStatus.value = 'failed'
-    ingestProgress.value = 100
     const detail = (error as any)?.response?.data?.detail || (error as any)?.message
-    ingestStage.value = detail || '入库失败'
-    message.error('入库失败')
+    message.error(detail ? `节点更新失败: ${detail}` : '节点更新失败')
+    throw error
+  }
+}
+
+const batchOperateStructuredNodes = async (payload: StructuredBatchOperationPayload) => {
+  if (!selectedNode.value || selectedNode.value.isFolder) return
+  try {
+    const result = await knowledgeApi.batchOperateDocumentBlocks('default', selectedNode.value.key, payload)
+    await loadDocContent(selectedNode.value.key)
+    await loadStructuredStats(selectedNode.value.key)
+    await loadStructuredIndex()
+    if (payload.operation === 'merge') {
+      const targetBlockId = String(result.target_block_id || payload.targetBlockId || '').trim()
+      if (targetBlockId) {
+        await nextTick()
+        docParsedWorkspaceRef.value?.setActiveLinkedItem(targetBlockId)
+      }
+    }
+    if (payload.operation === 'split') {
+      const focusBlockId = String(result.created_block_ids?.[0] || payload.blockIds?.[0] || '').trim()
+      if (focusBlockId) {
+        await nextTick()
+        docParsedWorkspaceRef.value?.setActiveLinkedItem(focusBlockId)
+      }
+    }
+    const successText = payload.operation === 'merge'
+      ? '批量合并已完成'
+      : payload.operation === 'delete'
+        ? `已删除 ${result.removed_block_ids?.length || payload.blockIds.length || 0} 个 block`
+        : `Block 已拆分为 ${Math.max(2, (result.created_block_ids?.length || 0) + 1)} 段`
+    message.success(successText)
+  } catch (error) {
+    const detail = (error as any)?.response?.data?.detail || (error as any)?.message
+    message.error(detail ? `结构操作失败: ${detail}` : '结构操作失败')
+    throw error
+  }
+}
+
+const undoLastStructuredOperation = async () => {
+  if (!selectedNode.value || selectedNode.value.isFolder) return
+  try {
+    const result = await knowledgeApi.undoLastDocumentBlockOperation('default', selectedNode.value.key)
+    await loadDocContent(selectedNode.value.key)
+    await loadStructuredStats(selectedNode.value.key)
+    await loadStructuredIndex()
+    const firstRestoredId = String(result.restored_block_ids?.[0] || '').trim()
+    if (firstRestoredId) {
+      await nextTick()
+      docParsedWorkspaceRef.value?.setActiveLinkedItem(firstRestoredId)
+    }
+    message.success('最近一次结构操作已撤回')
+  } catch (error) {
+    const detail = (error as any)?.response?.data?.detail || (error as any)?.message
+    message.error(detail ? `撤回结构操作失败: ${detail}` : '撤回结构操作失败')
+    throw error
   }
 }
 
@@ -1065,7 +1042,6 @@ onMounted(() => {
 })
 
 watch(() => selectedNode.value?.key, () => {
-  resetIngestState()
   if (!selectedNode.value || selectedNode.value.isFolder) {
     stopParsePolling()
     return
@@ -1077,7 +1053,6 @@ watch(() => selectedNode.value?.key, () => {
 
 onBeforeUnmount(() => {
   stopParsePolling()
-  resetIngestState()
 })
 </script>
 
