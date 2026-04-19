@@ -11,8 +11,8 @@ API_SERVER_DIR = PROJECT_ROOT / "apps" / "api-server"
 sys.path.insert(0, str(DOCS_CORE_SRC))
 sys.path.insert(0, str(API_SERVER_DIR))
 
-from docs_core.retrieval.contracts import KnowledgeQueryRequest
-from docs_core.retrieval.service import knowledge_query_service
+from docs_core.query.contracts import KnowledgeQueryRequest
+from docs_core.query.service import knowledge_query_service
 
 
 # 读取 jsonl 文件中的全部记录。

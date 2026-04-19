@@ -5,14 +5,14 @@ import uuid
 from typing import Any, Dict, Iterable, List, Tuple
 
 from docs_core.knowledge_service import KnowledgeNode, knowledge_service
-from docs_core.retrieval.contracts import (
+from docs_core.query.contracts import (
     KnowledgeCitation,
     KnowledgeQueryRequest,
     KnowledgeQueryResponse,
     RetrievedItem,
 )
-from docs_core.retrieval.query_router import route_query
-from docs_core.structured.result_store_json import file_storage
+from docs_core.query.query_router import route_query
+from docs_core.ingest.storage.file_store import file_storage
 
 
 # 归一化文本以提升中文检索匹配稳定性。

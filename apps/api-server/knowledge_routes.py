@@ -14,16 +14,16 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from docs_core.canonical import build_canonical_document
+from docs_core.ingest.canonical import build_canonical_document
 from docs_core.knowledge_service import knowledge_service
-from docs_core.parser.mineru_parser import mineru_parser
-from docs_core.retrieval.contracts import KnowledgeQueryRequest, KnowledgeQueryResponse
-from docs_core.retrieval.service import knowledge_query_service
-from docs_core.structured.result_store_json import (
+from docs_core.ingest.parser.mineru_parser import mineru_parser
+from docs_core.query.contracts import KnowledgeQueryRequest, KnowledgeQueryResponse
+from docs_core.query.service import knowledge_query_service
+from docs_core.ingest.storage.file_store import (
     build_structured_index_for_doc,
     get_doc_blocks_graph,
 )
-from docs_core.structured.result_store_json import file_storage
+from docs_core.ingest.storage.file_store import file_storage
 
 
 knowledge_router = APIRouter()

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from docs_core.structured.result_store_db import (
+from docs_core.ingest.storage.db_store import (
     KnowledgeIndexStore,
     KnowledgeMetaStore,
     parse_datetime,
@@ -172,7 +172,7 @@ class KnowledgeService:
     def _purge_document_artifacts(self, document_nodes: List[KnowledgeNode]) -> None:
         if not document_nodes:
             return
-        from docs_core.structured.result_store_json import file_storage
+        from docs_core.ingest.storage.file_store import file_storage
 
         doc_ids = [node.id for node in document_nodes]
         self.meta_store.delete_parse_tasks_by_doc_ids(doc_ids)

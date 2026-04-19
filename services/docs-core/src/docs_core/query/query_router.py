@@ -1,7 +1,7 @@
 """知识查询路由器。"""
 from typing import Dict
 
-from docs_core.retrieval.contracts import TaskType
+from docs_core.query.contracts import TaskType
 
 
 ROUTE_KEYWORDS: Dict[TaskType, tuple[str, ...]] = {

@@ -8,12 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from docs_core.structured.rawfiles_to_structured import (
+from docs_core.ingest.structured.structure_builder import (
     StructuredResult,
     build_structured_from_rawfiles,
     extract_media_bbox_list,
 )
-from docs_core.structured.result_store_db import persist_doc_blocks
+from docs_core.ingest.storage.db_store import persist_doc_blocks
 
 
 class FileStorage:

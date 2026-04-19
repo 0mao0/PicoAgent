@@ -181,14 +181,14 @@ execution_trace = []
 
 
 def _extract_structured_items_from_markdown(markdown_text: str) -> List[Dict[str, Any]]:
-    from docs_core.structured.result_store_json import extract_structured_items_from_markdown
+    from docs_core.ingest.storage.file_store import extract_structured_items_from_markdown
     return extract_structured_items_from_markdown(markdown_text)
 
 
 def _build_structured_index_for_doc(library_id: str, doc_id: str, strategy: str = 'A_structured') -> Dict[str, Any]:
     if strategy != 'A_structured':
         raise ValueError(f'Unsupported strategy: {strategy}')
-    from docs_core.structured.result_store_json import build_structured_index_for_doc
+    from docs_core.ingest.storage.file_store import build_structured_index_for_doc
     return build_structured_index_for_doc(library_id, doc_id, strategy)
 
 class TraceDispatcher(Dispatcher):
@@ -1229,7 +1229,7 @@ async def upload_document(
 ):
     """上传文档到知识库"""
     from docs_core.knowledge_service import KnowledgeNode, knowledge_service
-    from docs_core.structured.result_store_json import file_storage
+    from docs_core.ingest.storage.file_store import file_storage
     from datetime import datetime
     allowed_extensions = {'.pdf', '.doc', '.docx', '.md'}
     ext = os.path.splitext(file.filename or '')[1].lower()
@@ -1375,8 +1375,8 @@ def get_structured_stats(doc_id: str):
 @app.get("/api/knowledge/document/{library_id}/{doc_id}")
 def get_document(library_id: str, doc_id: str):
     """获取文档内容"""
-    from docs_core.structured.result_store_json import file_storage
-    from docs_core.structured.result_store_json import get_doc_blocks_graph
+    from docs_core.ingest.storage.file_store import file_storage
+    from docs_core.ingest.storage.file_store import get_doc_blocks_graph
 
     content = file_storage.read_markdown(library_id, doc_id)
     if content is None:
@@ -1396,7 +1396,7 @@ def get_document(library_id: str, doc_id: str):
 def update_document(library_id: str, doc_id: str, request: KnowledgeDocumentUpdate):
     """更新文档内容"""
     from docs_core.knowledge_service import knowledge_service
-    from docs_core.structured.result_store_json import file_storage
+    from docs_core.ingest.storage.file_store import file_storage
     content = request.content
     saved_path = file_storage.save_edited_markdown(library_id, doc_id, content)
     knowledge_service.update_node(doc_id, updated_at=datetime.now())
@@ -1411,7 +1411,7 @@ def update_document_block(
     request: KnowledgeDocumentBlockUpdate,
 ):
     """更新文档结构节点内容"""
-    from docs_core.structured.result_store_json import update_doc_block_content
+    from docs_core.ingest.storage.file_store import update_doc_block_content
 
     changes = request.dict(exclude_unset=True)
     try:
@@ -1440,7 +1440,7 @@ def batch_operate_document_blocks(
     request: KnowledgeDocumentBatchBlockOperation,
 ):
     """批量执行文档结构节点操作"""
-    from docs_core.structured.result_store_json import batch_operate_doc_blocks
+    from docs_core.ingest.storage.file_store import batch_operate_doc_blocks
 
     payload = request.dict(exclude_unset=True)
     try:
@@ -1468,7 +1468,7 @@ def batch_operate_document_blocks(
 @app.post("/api/knowledge/document/{library_id}/{doc_id}/blocks/undo")
 def undo_document_block_operation(library_id: str, doc_id: str):
     """撤回当前文档最近一次可回滚的结构操作"""
-    from docs_core.structured.result_store_json import undo_last_doc_block_operation
+    from docs_core.ingest.storage.file_store import undo_last_doc_block_operation
 
     try:
         result = undo_last_doc_block_operation(library_id, doc_id)
@@ -1496,7 +1496,7 @@ def undo_document_block_merge(library_id: str, doc_id: str):
 def get_document_storage(library_id: str, doc_id: str):
     """获取文档存储布局"""
     from docs_core.knowledge_service import knowledge_service
-    from docs_core.structured.result_store_json import file_storage
+    from docs_core.ingest.storage.file_store import file_storage
     node = knowledge_service.get_node(doc_id)
     if not node:
         raise HTTPException(status_code=404, detail="Document not found")

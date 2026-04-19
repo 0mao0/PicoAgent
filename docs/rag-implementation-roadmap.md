@@ -512,9 +512,9 @@ Question
 ## 14. 当前建议的第一批编码范围
 
 - 新增 `docs/rag-implementation-roadmap.md`
-- 新增 `docs_core.canonical` 骨架
-- 新增 `docs_core.tables.table_classifier` 骨架
-- 新增 `docs_core.retrieval` 最小 query contract / router / service
+- 新增 `docs_core.ingest.canonical` 骨架
+- 新增 `docs_core.ingest.tables.table_classifier` 骨架
+- 新增 `docs_core.query` 最小 query contract / router / service
 - 新增 `POST /api/knowledge/query`
 - 先基于现有 `A_structured` 的 `document_segments` 与 `doc_blocks` 跑通最小可用闭环
 

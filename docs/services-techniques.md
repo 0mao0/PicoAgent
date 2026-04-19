@@ -261,16 +261,16 @@ data/knowledge_base/libraries/{library_id}/documents/{doc_id}/
 - `apps/api-server/main.py`
   - 解析接口改异步任务化，返回 `task_id`。
   - 增加任务进度查询、文档版本、策略切换与统一查询接口。
-  - 保持单一 `A_structured` 索引构建，调用 `docs_core.structured.canonical_projection`。
-- `services/docs-core/src/docs_core/structured/canonical_projection.py`
-  - 结构化主链：统一生成 canonical structure，并写入 `knowledge_index.sqlite`。
-- `services/docs-core/src/docs_core/structured/doc_block_store.py`
-  - 承担 `doc_blocks` 主索引的写入、查询与统计，供结构化链路复用。
+  - 保持单一 `A_structured` 索引构建，调用 `docs_core.ingest.storage.file_store.build_structured_index_for_doc`。
+- `services/docs-core/src/docs_core/ingest/canonical/builder.py`
+  - 结构化主链：统一生成 canonical structure，供后续索引与查询链路复用。
+- `services/docs-core/src/docs_core/ingest/storage/db_store.py`
+  - 承担 `doc_blocks` 与 `document_segments` 主索引的写入、查询与统计。
 - `services/docs-core/src/docs_core/knowledge_service.py`
   - 作为元数据门面，持有 `KnowledgeMetaStore` 与 `KnowledgeIndexStore` 双库访问。
-- `services/docs-core/src/docs_core/structured/document_storage.py`
+- `services/docs-core/src/docs_core/ingest/storage/file_store.py`
   - 实现一文档一目录读写 API，并统一 canonical raw path 解析。
-- `services/docs-core/src/docs_core/parser/mineru_parser.py`
+- `services/docs-core/src/docs_core/ingest/parser/mineru_parser.py`
   - 输出解析产物清单并支持阶段进度回调。
 - `services/engtools/src/engtools/config.py`
   - 统一知识目录解析，支持新旧结构双栈。

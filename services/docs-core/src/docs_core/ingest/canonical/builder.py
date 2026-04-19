@@ -3,7 +3,7 @@ from html.parser import HTMLParser
 import re
 from typing import Any, List, Tuple
 
-from docs_core.canonical.types import (
+from docs_core.ingest.canonical.types import (
     CanonicalBlock,
     CanonicalChunk,
     CanonicalDocument,
@@ -11,8 +11,8 @@ from docs_core.canonical.types import (
     CanonicalTable,
     CitationTarget,
 )
-from docs_core.structured.result_store_json import file_storage
-from docs_core.tables import build_table_representations
+from docs_core.ingest.storage.file_store import file_storage
+from docs_core.ingest.structured import build_table_representations
 
 
 # 清洗文本，生成适合检索和比较的简化字段。

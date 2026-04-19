@@ -14,17 +14,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "services" / "docs-core" / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "apps" / "api-server"))
 
-from docs_core.structured.result_store_json import FileStorage
-import docs_core.structured.result_store_json as result_store_json_module
+from docs_core.ingest.storage.file_store import FileStorage
+import docs_core.ingest.storage.file_store as result_store_json_module
 import docs_core.knowledge_service as knowledge_service_module
 from docs_core.knowledge_service import KnowledgeService, KnowledgeNode
-from docs_core.structured.result_store_json import (
+from docs_core.ingest.storage.file_store import (
     extract_structured_items_from_markdown,
     _build_a_structured_segment_items,
     batch_operate_doc_blocks,
     undo_last_doc_block_merge,
 )
-from docs_core.structured.rawfiles_to_structured import (
+from docs_core.ingest.structured.structure_builder import (
     StructuredResult,
     build_structured_from_rawfiles,
     collect_media_related_block_refs
