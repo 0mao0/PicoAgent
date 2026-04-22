@@ -5,9 +5,17 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from docs_core.ingest.canonical.types import (
+    CanonicalBlock,
+    CanonicalChunk,
+    CanonicalDocument,
+    CanonicalTable,
+)
+from docs_core.ingest.storage.canonical_store import CanonicalSQLiteStore
 from docs_core.ingest.storage.db_store import (
     KnowledgeIndexStore,
     KnowledgeMetaStore,
+    STRUCTURED_DOC_GRAPH_STRATEGY,
     parse_datetime,
     resolve_knowledge_index_db_path,
     resolve_knowledge_meta_db_path,
@@ -32,7 +40,7 @@ class KnowledgeNode(BaseModel):
     parse_stage: Optional[str] = None
     parse_error: Optional[str] = None
     parse_task_id: Optional[str] = None
-    strategy: str = "A_structured"
+    strategy: str = STRUCTURED_DOC_GRAPH_STRATEGY
     schema_version: str = SCHEMA_VERSION
     sort_order: int = 0
     created_at: datetime = datetime.now()
@@ -81,6 +89,7 @@ class KnowledgeService:
             db_path=self.index_db_path,
             schema_version=SCHEMA_VERSION,
         )
+        self.canonical_store = CanonicalSQLiteStore(db_path=self.index_db_path)
         self._load_from_db()
         if not self.libraries:
             self.create_library("default", "默认知识库", "系统自动创建的默认知识库")
@@ -119,7 +128,7 @@ class KnowledgeService:
                 parse_stage=row["parse_stage"],
                 parse_error=row["parse_error"],
                 parse_task_id=row["parse_task_id"],
-                strategy=row["strategy"] or "A_structured",
+                strategy=row["strategy"] or STRUCTURED_DOC_GRAPH_STRATEGY,
                 schema_version=row["schema_version"] or SCHEMA_VERSION,
                 sort_order=int(row["sort_order"] or 0),
                 created_at=parse_datetime(row["created_at"]),
@@ -181,6 +190,7 @@ class KnowledgeService:
             self.index_store.clear_document_segments(node.id)
             self.index_store.clear_doc_blocks(node.id)
             self.index_store.clear_doc_block_corrections(node.id)
+            self.canonical_store.clear_document(node.id)
             file_storage.delete_document(node.library_id, node.id)
 
     # 生成删除节点前的影响范围预览。
@@ -401,6 +411,59 @@ class KnowledgeService:
     # 统计文档结构化片段。
     def get_document_segment_stats(self, doc_id: str) -> Dict[str, Any]:
         return self.index_store.get_document_segment_stats(doc_id)
+
+    # 保存整份 canonical document 到 SQLite 真相源。
+    def save_canonical_document(self, document: CanonicalDocument) -> Dict[str, int]:
+        return self.canonical_store.save_document(document)
+
+    # 读取整份 canonical document。
+    def get_canonical_document(self, doc_id: str) -> Optional[CanonicalDocument]:
+        return self.canonical_store.get_document(doc_id)
+
+    # 查询 canonical chunks。
+    def list_canonical_chunks(
+        self,
+        doc_id: str,
+        chunk_types: Optional[List[str]] = None,
+        keyword: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[CanonicalChunk]:
+        return self.canonical_store.list_chunks(
+            doc_id=doc_id,
+            chunk_types=chunk_types,
+            keyword=keyword,
+            limit=limit,
+        )
+
+    # 查询 canonical blocks。
+    def list_canonical_blocks(
+        self,
+        doc_id: str,
+        block_types: Optional[List[str]] = None,
+        keyword: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[CanonicalBlock]:
+        return self.canonical_store.list_blocks(
+            doc_id=doc_id,
+            block_types=block_types,
+            keyword=keyword,
+            limit=limit,
+        )
+
+    # 查询 canonical tables。
+    def list_canonical_tables(
+        self,
+        doc_id: str,
+        table_types: Optional[List[str]] = None,
+        keyword: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[CanonicalTable]:
+        return self.canonical_store.list_tables(
+            doc_id=doc_id,
+            table_types=table_types,
+            keyword=keyword,
+            limit=limit,
+        )
 
 
 knowledge_service = KnowledgeService()

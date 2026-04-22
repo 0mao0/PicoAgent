@@ -20,7 +20,7 @@ import docs_core.knowledge_service as knowledge_service_module
 from docs_core.knowledge_service import KnowledgeService, KnowledgeNode
 from docs_core.ingest.storage.file_store import (
     extract_structured_items_from_markdown,
-    _build_a_structured_segment_items,
+    _build_doc_blocks_graph_segment_items,
     batch_operate_doc_blocks,
     undo_last_doc_block_merge,
 )
@@ -122,23 +122,23 @@ class TestStructuredSegments(unittest.TestCase):
                 {"item_type": "table", "title": "表格1", "content": "|A|B|\n|-|-|\n|1|2|", "meta": {"line": 10}, "order_index": 1},
                 {"item_type": "segment", "title": "段落1", "content": "这是用于检索的段落内容。", "meta": {"line": 20}, "order_index": 2},
             ]
-            saved_count = service.save_document_segments("doc-2001", "default", "A_structured", items)
+            saved_count = service.save_document_segments("doc-2001", "default", "doc_blocks_graph_v1", items)
             self.assertEqual(saved_count, 3)
 
-            all_items = service.list_document_segments("doc-2001", "A_structured")
+            all_items = service.list_document_segments("doc-2001", "doc_blocks_graph_v1")
             self.assertEqual(len(all_items), 3)
-            table_items = service.list_document_segments("doc-2001", "A_structured", item_type="table")
+            table_items = service.list_document_segments("doc-2001", "doc_blocks_graph_v1", item_type="table")
             self.assertEqual(len(table_items), 1)
-            keyword_items = service.list_document_segments("doc-2001", "A_structured", keyword="检索")
+            keyword_items = service.list_document_segments("doc-2001", "doc_blocks_graph_v1", keyword="检索")
             self.assertEqual(len(keyword_items), 1)
 
             stats = service.get_document_segment_stats("doc-2001")
             self.assertEqual(stats["total"], 3)
-            self.assertEqual(stats["strategies"]["A_structured"]["heading"], 1)
+            self.assertEqual(stats["strategies"]["doc_blocks_graph_v1"]["heading"], 1)
 
-            deleted = service.clear_document_segments("doc-2001", "A_structured")
+            deleted = service.clear_document_segments("doc-2001", "doc_blocks_graph_v1")
             self.assertEqual(deleted, 3)
-            self.assertEqual(len(service.list_document_segments("doc-2001", "A_structured")), 0)
+            self.assertEqual(len(service.list_document_segments("doc-2001", "doc_blocks_graph_v1")), 0)
             del service
             gc.collect()
 
@@ -175,7 +175,7 @@ class TestStructuredSegments(unittest.TestCase):
                 isolated_service.save_document_segments(
                     "doc-delete-1",
                     "default",
-                    "A_structured",
+                    "doc_blocks_graph_v1",
                     [{"item_type": "segment", "title": "段落", "content": "待清理内容"}],
                 )
                 isolated_service.index_store.insert_doc_blocks_base_rows(
@@ -215,7 +215,7 @@ class TestStructuredSegments(unittest.TestCase):
                 self.assertEqual(len(isolated_service.parse_tasks), 0)
                 self.assertFalse((Path(temp_dir) / "libraries" / "default" / "documents" / "doc-delete-1").exists())
                 self.assertEqual(len(isolated_service.meta_store.list_parse_tasks()), 0)
-                self.assertEqual(len(isolated_service.list_document_segments("doc-delete-1", "A_structured")), 0)
+                self.assertEqual(len(isolated_service.list_document_segments("doc-delete-1", "doc_blocks_graph_v1")), 0)
                 conn = isolated_service.index_store.connect()
                 try:
                     doc_block_count = conn.execute(
@@ -287,9 +287,9 @@ class TestStructuredSegments(unittest.TestCase):
             del service
             gc.collect()
 
-    # 测试 A_structured 索引行会被转换为带精确定位元数据的结构化条目。
-    def test_build_a_structured_segment_items_contains_exact_refs(self):
-        """测试 A_structured 条目会输出 block_uid、node_id 等精确引用。"""
+    # 测试 doc_blocks_graph_v1 索引行会被转换为带精确定位元数据的结构化条目。
+    def test_build_doc_blocks_graph_segment_items_contains_exact_refs(self):
+        """测试 doc_blocks_graph_v1 条目会输出 block_uid、node_id 等精确引用。"""
         result = StructuredResult(
             nodes=[
                 {
@@ -329,7 +329,7 @@ class TestStructuredSegments(unittest.TestCase):
             }
         )
 
-        items = _build_a_structured_segment_items(result)
+        items = _build_doc_blocks_graph_segment_items(result)
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["id"], "doc-1:0:3")
@@ -340,7 +340,7 @@ class TestStructuredSegments(unittest.TestCase):
         self.assertEqual(items[0]["meta"]["block_seq"], 3)
         self.assertEqual(items[0]["meta"]["level"], 1)
 
-    def test_build_a_structured_segment_items_contains_caption_and_footnote_refs(self):
+    def test_build_doc_blocks_graph_segment_items_contains_caption_and_footnote_refs(self):
         """测试图表条目会输出 caption 与 footnote 的显式 block_uid 引用。"""
         result = StructuredResult(
             nodes=[
@@ -410,7 +410,7 @@ class TestStructuredSegments(unittest.TestCase):
             }
         )
 
-        items = _build_a_structured_segment_items(result)
+        items = _build_doc_blocks_graph_segment_items(result)
 
         self.assertEqual(items[0]["meta"]["caption_block_uid"], "doc-1:0:11")
         self.assertEqual(items[0]["meta"]["caption_block_uids"], ["doc-1:0:11"])
@@ -645,7 +645,7 @@ class TestFormulaSemantics(unittest.TestCase):
         )
         result = build_formula_representations(
             formula_text="A = n(Lsinγ + B)",
-            explanation_lines=["式中", "B 设计槽宽（m）"],
+            explanation_lines=["式中", "槽宽参数 B（m）"],
             llm_client=llm_client,
             llm_model="Qwen3.6-35B-A3B (Private)",
             use_llm=True,
@@ -657,8 +657,8 @@ class TestFormulaSemantics(unittest.TestCase):
         self.assertEqual(params[0]["extracted_by"], "llm")
         self.assertEqual(result["llm_status"], "ok")
 
-    def test_build_a_structured_segment_items_adds_formula_items(self):
-        """测试 A_structured 会为公式补充摘要和参数条目。"""
+    def test_build_doc_blocks_graph_segment_items_adds_formula_items(self):
+        """测试 doc_blocks_graph_v1 会为公式补充摘要和参数条目。"""
         structured_result = StructuredResult(
             nodes=[
                 {
@@ -727,7 +727,7 @@ class TestFormulaSemantics(unittest.TestCase):
             },
         )
 
-        items = _build_a_structured_segment_items(structured_result, use_llm=False)
+        items = _build_doc_blocks_graph_segment_items(structured_result, use_llm=False)
         item_types = [item["item_type"] for item in items]
         self.assertIn("equation_interline", item_types)
         self.assertIn("formula_summary", item_types)
@@ -978,7 +978,7 @@ class TestStructuredBatchOperations(unittest.TestCase):
                 self.assertIn(split_result["created_block_ids"][1], projected_uids)
                 self.assertNotIn("doc-batch-1:0:3", projected_uids)
 
-                projected_segments = isolated_service.list_document_segments("doc-batch-1", "A_structured")
+                projected_segments = isolated_service.list_document_segments("doc-batch-1", "doc_blocks_graph_v1")
                 segment_uids = {item["meta"]["block_uid"] for item in projected_segments}
                 self.assertIn(split_result["created_block_ids"][0], segment_uids)
                 self.assertIn(split_result["created_block_ids"][1], segment_uids)
@@ -1173,7 +1173,7 @@ class TestStructuredBatchOperations(unittest.TestCase):
                 self.assertEqual(latest_node_map["doc-batch-relevel-1:0:4"]["derived_level"], 3)
                 self.assertEqual(latest_node_map["doc-batch-relevel-1:0:4"]["parent_uid"], "doc-batch-relevel-1:0:3")
 
-                projected_segments = isolated_service.list_document_segments("doc-batch-relevel-1", "A_structured")
+                projected_segments = isolated_service.list_document_segments("doc-batch-relevel-1", "doc_blocks_graph_v1")
                 projected_segment_map = {
                     item["meta"]["block_uid"]: item["meta"]
                     for item in projected_segments

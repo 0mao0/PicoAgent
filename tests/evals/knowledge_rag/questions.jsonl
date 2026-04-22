@@ -42,3 +42,4 @@
 {"question_id":"q_042","question":"油气化工码头应配置哪些系统？","task_type":"definition","library_id":"default","doc_ids":["doc-a90ea2dc"],"expected_route":"content_qa","difficulty":"medium","tags":["doc-a90ea2dc","信息系统","油气化工"]}
 {"question_id":"q_043","question":"煤炭、矿石等散装货物运输过程中应采取什么防尘措施？","task_type":"definition","library_id":"default","doc_ids":["doc-a90ea2dc"],"expected_route":"content_qa","difficulty":"medium","tags":["doc-a90ea2dc","通风","防尘"]}
 {"question_id":"q_044","question":"港口应统筹设置什么接收设施？","task_type":"definition","library_id":"default","doc_ids":["doc-a90ea2dc"],"expected_route":"content_qa","difficulty":"medium","tags":["doc-a90ea2dc","环境保护","接收设施"]}
+{"question_id":"sql_001","question":"默认知识库里有多少篇文档？","task_type":"analytic_sql","library_id":"default","doc_ids":[],"expected_route":"analytic_sql","difficulty":"easy","tags":["sql","统计","文档数量"]}

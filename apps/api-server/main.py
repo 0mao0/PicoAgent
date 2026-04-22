@@ -119,7 +119,7 @@ class KnowledgeStrategyUpdate(BaseModel):
 class KnowledgeStructuredIndexRequest(BaseModel):
     library_id: str
     doc_id: str
-    strategy: Optional[str] = 'A_structured'
+    strategy: Optional[str] = 'doc_blocks_graph_v1'
 
 class KnowledgeDocumentUpdate(BaseModel):
     content: str
@@ -185,8 +185,8 @@ def _extract_structured_items_from_markdown(markdown_text: str) -> List[Dict[str
     return extract_structured_items_from_markdown(markdown_text)
 
 
-def _build_structured_index_for_doc(library_id: str, doc_id: str, strategy: str = 'A_structured') -> Dict[str, Any]:
-    if strategy != 'A_structured':
+def _build_structured_index_for_doc(library_id: str, doc_id: str, strategy: str = 'doc_blocks_graph_v1') -> Dict[str, Any]:
+    if strategy != 'doc_blocks_graph_v1':
         raise ValueError(f'Unsupported strategy: {strategy}')
     from docs_core.ingest.storage.file_store import build_structured_index_for_doc
     return build_structured_index_for_doc(library_id, doc_id, strategy)
@@ -1303,7 +1303,7 @@ def set_doc_strategy(doc_id: str, request: KnowledgeStrategyUpdate):
     """设置文档策略"""
     from docs_core.knowledge_service import knowledge_service
     strategy = request.strategy
-    allowed = {'A_structured'}
+    allowed = {'doc_blocks_graph_v1'}
     if strategy not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported strategy")
     node = knowledge_service.update_node(doc_id, strategy=strategy)
@@ -1318,11 +1318,11 @@ def build_structured_index(request: KnowledgeStructuredIndexRequest):
     from docs_core.knowledge_service import knowledge_service
     doc_id = request.doc_id
     library_id = request.library_id
-    strategy = request.strategy or 'A_structured'
+    strategy = request.strategy or 'doc_blocks_graph_v1'
     node = knowledge_service.get_node(doc_id)
     if not node:
         raise HTTPException(status_code=404, detail="Document not found")
-    allowed = {'A_structured'}
+    allowed = {'doc_blocks_graph_v1'}
     if strategy not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported strategy")
     try:
@@ -1342,7 +1342,7 @@ def build_structured_index(request: KnowledgeStructuredIndexRequest):
 @app.get("/api/knowledge/structured/{doc_id}")
 def get_structured_index(
     doc_id: str,
-    strategy: str = 'A_structured',
+    strategy: str = 'doc_blocks_graph_v1',
     item_type: Optional[str] = None,
     keyword: Optional[str] = None,
     limit: int = 200

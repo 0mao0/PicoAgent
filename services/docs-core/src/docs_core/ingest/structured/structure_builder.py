@@ -692,20 +692,43 @@ def is_equation_explain_continuation(text: str) -> bool:
         return False
     if txt.startswith(("式中", "其中", "注")):
         return True
-    return re.match(r"^[A-Za-zΑ-Ωα-ω][A-Za-z0-9_{}()\\\-]*\s*[—\-–=:：]", txt) is not None
+    if re.match(r"^[•·]\s*[A-Za-zΑ-Ωα-ω][A-Za-z0-9_{}()\\\-^/.']*\s*(?:[—\-–一=:：])", txt):
+        return True
+    if re.match(r"^[A-Za-zΑ-Ωα-ω][A-Za-z0-9_{}()\\\-^/.']*\s*(?:[—\-–一=:：])", txt):
+        return True
+    return re.match(r"^[A-Za-zΑ-Ωα-ω][A-Za-z0-9_{}()\\\-^/.']*\s+[\u4e00-\u9fff(（]", txt) is not None
+
+
+def find_recent_equation_uid(rows: list[Any], idx: int, max_back: int = 8) -> str | None:
+    """回溯最近可作为说明父级的公式块。"""
+    current = rows[idx]
+    page_idx = current["page_idx"]
+    for j in range(idx - 1, max(-1, idx - max_back), -1):
+        prev = rows[j]
+        if prev["page_idx"] != page_idx:
+            break
+        prev_type = prev["block_type"]
+        if prev_type == "equation_interline":
+            return prev["block_uid"]
+        if prev_type in ("title", "table", "image", "page_header", "page_number"):
+            break
+    return None
 
 
 def derive_explain_target(rows: list[Any], idx: int) -> tuple[str | None, str | None, float, str]:
     """为说明性段落回溯关联公式或图表目标。"""
     current = rows[idx]
-    if current["block_type"] != "paragraph":
+    if current["block_type"] not in ("paragraph", "list"):
         return None, None, 0.0, "none"
     txt = (current["plain_text"] or "").strip()
     if not txt:
         return None, None, 0.0, "none"
-    trigger = txt.startswith("式中") or txt.startswith("其中") or txt.startswith("注")
+    trigger = txt.startswith("式中") or txt.startswith("其中") or txt.startswith("注") or is_equation_explain_continuation(txt)
     if not trigger:
         return None, None, 0.0, "none"
+    recent_equation_uid = find_recent_equation_uid(rows, idx)
+    if recent_equation_uid:
+        return recent_equation_uid, "equation", 0.85 if txt.startswith(("式中", "其中", "注")) else 0.8, "rule"
     page_idx = current["page_idx"]
     for j in range(idx - 1, max(-1, idx - 8), -1):
         prev = rows[j]
@@ -1150,7 +1173,7 @@ def build_structured_from_rawfiles(
         explain_uid, explain_type, exp_conf, exp_by = derive_explain_target(rows, i)
         
         row_page_idx = int(row["page_idx"])
-        if block_type == "paragraph":
+        if block_type in ("paragraph", "list"):
             if explain_uid and explain_type == "equation":
                 active_equation_explain_uid = explain_uid
                 active_equation_explain_page_idx = row_page_idx
@@ -1165,6 +1188,19 @@ def build_structured_from_rawfiles(
                 exp_conf = max(exp_conf, 0.72)
                 exp_by = "rule"
                 parent_uid = active_equation_explain_uid
+            elif is_equation_explain_continuation(text):
+                recent_equation_uid = find_recent_equation_uid(rows, i)
+                if recent_equation_uid:
+                    active_equation_explain_uid = recent_equation_uid
+                    active_equation_explain_page_idx = row_page_idx
+                    explain_uid = recent_equation_uid
+                    explain_type = "equation"
+                    exp_conf = max(exp_conf, 0.76)
+                    exp_by = "rule"
+                    parent_uid = recent_equation_uid
+                else:
+                    active_equation_explain_uid = None
+                    active_equation_explain_page_idx = None
             else:
                 active_equation_explain_uid = None
                 active_equation_explain_page_idx = None

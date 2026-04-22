@@ -1,5 +1,6 @@
 """docs_core ?????????"""
 
+from .canonical_store import CanonicalSQLiteStore
 from .db_store import (
     KNOWLEDGE_INDEX_DB_NAME,
     KNOWLEDGE_META_DB_NAME,
@@ -26,6 +27,7 @@ from .file_store import (
 
 __all__ = [
     "FileStorage",
+    "CanonicalSQLiteStore",
     "KNOWLEDGE_INDEX_DB_NAME",
     "KNOWLEDGE_META_DB_NAME",
     "KnowledgeIndexStore",

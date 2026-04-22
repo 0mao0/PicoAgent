@@ -8,9 +8,11 @@ if TYPE_CHECKING:
 
 
 FORMULA_NUMBER_RE = re.compile(r"[（(](\d+(?:\.\d+)*(?:-\d+)?)[）)]")
+FORMULA_PARAM_SYMBOL_RE = r"[A-Za-zΑ-Ωα-ω\\][A-Za-z0-9_{}^()\\/.\-']{0,20}"
 FORMULA_PARAM_RE = re.compile(
-    r"^\s*([A-Za-zΑ-Ωα-ω\\][A-Za-z0-9_{}^()\\/]*)\s*(?:[—–-]{1,3}|:=|=|：|:)\s*(.+?)\s*$"
+    rf"^\s*({FORMULA_PARAM_SYMBOL_RE})\s*(?:[—–\-一]{{1,3}}|:=|=|：|:)\s*(.+?)\s*$"
 )
+FORMULA_PARAM_SOFT_RE = re.compile(rf"^\s*({FORMULA_PARAM_SYMBOL_RE})\s+(.+?)\s*$")
 REFERENCE_HINT_RE = re.compile(r"(采用[^；。]*|按[^；。]*|取[^；。]*|见[^；。]*|按表[^；。]*)")
 UNIT_RE = re.compile(r"[（(]([^()（）]{1,20})[）)]")
 JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -78,8 +80,21 @@ def parse_formula_param_rule(line: str) -> Optional[Dict[str, Any]]:
     candidate = clean_formula_text(line)
     if not candidate:
         return None
+    candidate = re.sub(r"^[•·]\s*", "", candidate)
     candidate = re.sub(r"^(式中|其中|注[:：]?)\s*", "", candidate)
     match = FORMULA_PARAM_RE.match(candidate)
+    if not match:
+        soft_match = FORMULA_PARAM_SOFT_RE.match(candidate)
+        if soft_match:
+            symbol_candidate = clean_formula_text(soft_match.group(1))
+            description_candidate = clean_formula_text(soft_match.group(2))
+            if (
+                symbol_candidate
+                and description_candidate
+                and re.search(r"[\u4e00-\u9fff(（]", description_candidate)
+                and not description_candidate.startswith(("+", "-", "*", "/", "="))
+            ):
+                match = soft_match
     if not match:
         return None
 

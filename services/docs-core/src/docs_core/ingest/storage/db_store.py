@@ -11,6 +11,7 @@ from docs_core.ingest.structured.structure_builder import StructuredResult
 
 KNOWLEDGE_META_DB_NAME = "knowledge_meta.sqlite"
 KNOWLEDGE_INDEX_DB_NAME = "knowledge_index.sqlite"
+STRUCTURED_DOC_GRAPH_STRATEGY = "doc_blocks_graph_v1"
 
 
 # 解析仓库根目录，统一定位到 monorepo 根。
@@ -109,7 +110,7 @@ class KnowledgeMetaStore:
                     parse_stage TEXT,
                     parse_error TEXT,
                     parse_task_id TEXT,
-                    strategy TEXT NOT NULL DEFAULT 'A_structured',
+                    strategy TEXT NOT NULL DEFAULT 'doc_blocks_graph_v1',
                     schema_version TEXT NOT NULL DEFAULT '1.0.0',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -895,7 +896,6 @@ class KnowledgeIndexStore:
             total += cnt
             summary.setdefault(strategy, {})[item_type] = cnt
         return {"doc_id": doc_id, "total": total, "strategies": summary}
-
 
 _index_store = KnowledgeIndexStore()
 

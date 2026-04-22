@@ -41,6 +41,21 @@
           <template v-else-if="msg.role === 'assistant'">
             <div class="assistant-content">
               <div class="answer-text" v-html="renderContent(msg.content)" />
+              <div v-if="getVisibleCitations(msg).length" class="citation-panel">
+                <div class="citation-title">参考依据</div>
+                <div
+                  v-for="citation in getVisibleCitations(msg)"
+                  :key="`${citation.target_id}-${citation.page_idx}-${citation.section_path}`"
+                  class="citation-item"
+                >
+                  <div class="citation-meta">
+                    <span class="citation-doc">{{ citation.doc_title }}</span>
+                    <span v-if="citation.page_idx" class="citation-page">P{{ citation.page_idx }}</span>
+                  </div>
+                  <div v-if="citation.section_path" class="citation-path">{{ citation.section_path }}</div>
+                  <div v-if="citation.snippet" class="citation-snippet">{{ citation.snippet }}</div>
+                </div>
+              </div>
             </div>
           </template>
 
@@ -267,6 +282,34 @@ const displayMessages = computed(() => {
 })
 
 /**
+ * 去重引用，避免同页同段重复展示。
+ */
+const getUniqueCitations = (message: BaseChatMessage) => {
+  const citations = Array.isArray(message.citations) ? message.citations : []
+  const seen = new Set<string>()
+  return citations.filter(citation => {
+    const key = [
+      citation.target_id,
+      citation.doc_id,
+      citation.page_idx,
+      citation.section_path
+    ].join('::')
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+/**
+ * 仅展示主引用，避免把辅助证据误读为多处正文答案。
+ */
+const getVisibleCitations = (message: BaseChatMessage) => {
+  return getUniqueCitations(message).slice(0, 1)
+}
+
+/**
  * 转义纯文本内容，避免在默认渲染路径中注入 HTML。
  */
 const escapeHtml = (content: string): string => {
@@ -341,9 +384,16 @@ const handleSend = () => {
   }
 
   emit('send', content, selectedModel.value)
+  resetComposer()
+  scrollToBottom()
+}
+
+/**
+ * 重置输入态，确保发送后不会残留旧问题。
+ */
+const resetComposer = () => {
   inputText.value = ''
   pendingImages.value = []
-  scrollToBottom()
 }
 
 /**
@@ -455,6 +505,11 @@ const stopResize = () => {
 
 watch(() => props.messages.length, scrollToBottom)
 watch(() => props.currentStreamContent, scrollToBottom)
+watch(() => props.loading, value => {
+  if (value) {
+    resetComposer()
+  }
+})
 watch(() => props.defaultModel, value => {
   selectedModel.value = value
 })
@@ -624,6 +679,64 @@ defineExpose({
           :deep(strong) {
             font-weight: 600;
           }
+        }
+
+        .citation-panel {
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px solid rgba(15, 23, 42, 0.08);
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .citation-title {
+          font-size: 12px;
+          font-weight: 600;
+          color: #8c8c8c;
+          letter-spacing: 0.02em;
+        }
+
+        .citation-item {
+          padding: 10px 12px;
+          border-radius: 10px;
+          background: #fffaf0;
+          border-left: 3px solid #faad14;
+          box-shadow: inset 0 0 0 1px rgba(250, 173, 20, 0.18);
+        }
+
+        .citation-meta {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 4px;
+          font-size: 12px;
+        }
+
+        .citation-doc {
+          font-weight: 600;
+          color: #595959;
+        }
+
+        .citation-page {
+          color: #ad6800;
+          background: rgba(250, 173, 20, 0.14);
+          border-radius: 999px;
+          padding: 1px 6px;
+        }
+
+        .citation-path {
+          font-size: 12px;
+          color: #8c8c8c;
+          line-height: 1.5;
+          margin-bottom: 4px;
+        }
+
+        .citation-snippet {
+          font-size: 12px;
+          line-height: 1.6;
+          color: #595959;
+          white-space: pre-wrap;
         }
 
         .streaming-cursor {

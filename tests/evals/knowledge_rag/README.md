@@ -16,6 +16,8 @@
   - 调用当前知识检索主链并计算 Recall@3、Recall@5、MRR，并额外统计拒答样本的空检索正确率。
 - `eval_answer.py`
   - 调用当前知识检索主链并评估回答非空率、必须引用命中率、拒答正确率。
+- `eval_text2sql.py`
+  - 调用当前 Text-to-SQL 主链并评估 SQL 执行成功率与精确匹配率。
 
 ## 使用原则
 
@@ -34,5 +36,7 @@
   - `python tests/evals/knowledge_rag/eval_retrieval.py`
 - 回答评测：
   - `python tests/evals/knowledge_rag/eval_answer.py`
+- Text-to-SQL 评测：
+  - `python tests/evals/knowledge_rag/eval_text2sql.py`
 - 一键运行：
   - `pnpm run eval:knowledge-rag`

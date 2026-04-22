@@ -33,7 +33,7 @@
   - 标识解析产物（Markdown, JSON 索引, 图片等）的存储结构是否与当前代码逻辑兼容。
 - **版本提升准则**：
   - 当修改了解析产物的目录结构时。
-  - 当修改了 `A_structured` 生成的索引 JSON 格式时。
+  - 当修改了 `doc_blocks_graph_v1` 生成的索引 JSON 格式时。
   - 当需要强制所有存量文档重新解析以适配新功能时。
 - **当前版本**：`1.0.0`
 
@@ -241,6 +241,9 @@ flowchart TD
         Task["TaskQueue\nCelery/Asyncio 异步处理"]
         Parser["MinerU Parser\n云端解析 + 本地后处理"]
         Storage["FileStorage\n一文档一目录规范"]
+        Query["Query Service\nintent + planner"]
+        Executors["Executors\ncontent/table/formula"]
+        Answering["Answering\ncitation + answer"]
     end
 
     subgraph Strategy["检索策略层"]
@@ -255,6 +258,10 @@ flowchart TD
     Task -- 调用 --> Parser
     Parser -- 产物落盘 --> Storage
     Storage -- 构建索引 --> Strategy
+    API -- 发起问答 --> Query
+    Query -- 规划并分发 --> Executors
+    Executors -- 召回证据 --> Strategy
+    Executors -- 组织作答 --> Answering
     KM -- 获取结果 --> API
 ```
 
@@ -357,7 +364,7 @@ flowchart TB
 
 - `apps/admin-console/src/views/KnowledgeManage.vue`
   - 拆分 B 区状态机渲染：未解析、解析中、已解析。
-  - 保持单一结构化策略：`A_structured`。
+  - 保持单一结构化策略：`doc_blocks_graph_v1`。
   - 新增解析进度轮询（按 `task_id` 获取进度）。
   - 已解析态改为 B1/B2 双区：左原文，右 Markdown 预览/编辑。
 - `apps/admin-console/src/views/components/DocumentPreview.vue`

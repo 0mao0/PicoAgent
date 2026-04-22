@@ -210,7 +210,7 @@ flowchart TB
 
     subgraph MinerU["🔧 MinerU-RAG (复用)"]
         MC["MinerUClient<br/>文档解析"]
-        RB["RAGBuilder<br/>向量建库"]
+        RB["Chunk Builder<br/>切片与结构化"]
         LC["LLMClient<br/>基础问答"]
     end
 
@@ -221,7 +221,7 @@ flowchart TB
     end
 
     subgraph Storage["💾 存储层"]
-        VS["向量数据库<br/>语义检索"]
+        VS["canonical SQLite<br/>证据检索"]
         SS["结构化数据库<br/>表格数据"]
         FS["文件存储<br/>原图/缓存"]
     end
@@ -327,7 +327,7 @@ flowchart LR
         M1["PDF解析"]
         M2["Markdown输出"]
         M3["语义切片"]
-        M4["向量存储"]
+        M4["证据索引"]
         M5["基础问答"]
     end
 
@@ -361,7 +361,7 @@ flowchart LR
 | PDF 解析 | ✅ 100% | - | 直接使用 MinerUClient |
 | Markdown 输出 | ✅ 100% | - | 高保真输出 |
 | 语义切片 | ✅ 80% | 20% | 保留块边界信息 |
-| 向量存储 | ✅ 100% | - | 使用 RAGBuilder |
+| 证据索引 | ⚠️ 0% | ✅ 100% | 当前使用 canonical SQLite 与规则打分 |
 | 基础问答 | ✅ 100% | - | 使用 LLMClient |
 | 表格处理 | ❌ 0% | ✅ 100% | **核心差异化** |
 | 公式计算 | ❌ 0% | ✅ 100% | **核心差异化** |
@@ -397,9 +397,9 @@ services/docs-core/
 │       │   └── reference/           # 引用增强
 │       │       └── indexer.py           # 引用索引
 │       │
-│       ├── storage/             # 存储层
-│       │   ├── vector_store.py      # 向量存储
-│       │   ├── structured_store.py  # 结构化存储
+│       ├── ingest/storage/      # 存储层
+│       │   ├── canonical_store.py   # canonical SQLite 真相源
+│       │   ├── db_store.py          # 元数据与索引存储
 │       │   └── file_store.py        # 文件存储
 │       │
 │       ├── query/               # 查询服务
@@ -548,7 +548,7 @@ gantt
 
 | 版本 | 目标 | 交付物 |
 |------|------|--------|
-| v0.2.23 | 语义查询集成 | 前端调用 RAGBuilder |
+| v0.2.23 | 语义查询集成 | 前端调用 canonical 检索接口 |
 | v0.2.24 | 查询结果展示 | 结果列表组件 |
 | v0.2.25 | 混合查询 | 语义+表格混合 |
 | v0.2.26 | 查询历史 | 历史记录功能 |

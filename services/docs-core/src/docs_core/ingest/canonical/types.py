@@ -153,6 +153,8 @@ class CanonicalDocument(BaseModel):
     language: str = "zh"
     page_count: int = 0
     status: str = "pending"
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
     pages: List[CanonicalPage] = Field(default_factory=list)
     blocks: List[CanonicalBlock] = Field(default_factory=list)
     outlines: List[CanonicalOutlineNode] = Field(default_factory=list)

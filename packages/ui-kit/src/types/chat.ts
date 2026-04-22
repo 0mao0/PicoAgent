@@ -12,6 +12,15 @@ export interface BaseChatMessage {
   content: string
   timestamp?: number
   images?: string[]
+  citations?: Array<{
+    target_id: string
+    doc_id: string
+    doc_title: string
+    page_idx: number
+    section_path: string
+    snippet: string
+    score: number
+  }>
 }
 
 /**

@@ -55,13 +55,21 @@ flowchart LR
 - 解析长链路保持异步任务化，不直接在请求中同步阻塞完成
 - 文档存储遵循 `data/knowledge_base/libraries/{library_id}/documents/{doc_id}`
 - 运行时双库固定为 `knowledge_meta.sqlite` 与 `knowledge_index.sqlite`
+- `knowledge_index.sqlite` 同时承载：
+  - `doc_blocks` / `document_segments`
+  - `canonical_documents/pages/blocks/outlines/chunks/tables/citation_targets`
+- `/api/knowledge/query` 的运行时查询主链优先读取 canonical SQLite，不再默认依赖 `middle.json`
 
 ### 后端代码锚点
 
 - `apps/api-server/knowledge_routes.py`
 - `services/docs-core/src/docs_core/knowledge_service.py`
-- `services/docs-core/src/docs_core/parser/mineru_parser.py`
-- `services/docs-core/src/docs_core/structured/result_store_json.py`
+- `services/docs-core/src/docs_core/ingest/parser/mineru_parser.py`
+- `services/docs-core/src/docs_core/ingest/storage/canonical_store.py`
+- `services/docs-core/src/docs_core/query/service.py`
+- `services/docs-core/src/docs_core/query/execution_planner.py`
+- `services/docs-core/src/docs_core/executors/content_executor.py`
+- `services/docs-core/src/docs_core/answering/answer_assembler.py`
 
 ***
 
@@ -132,6 +140,13 @@ flowchart TB
     Parser["mineru_parser\n高保真解析"]
     Storage["document_storage\n一文档一目录与兼容路径"]
     Struct["canonical_projection\nA 主链 canonical structure"]
+    CanonicalSql["canonical_store\ncanonical SQLite truth source"]
+    Query["query/*\nintent/planner/service"]
+    Executors["executors/*\ncontent/table/formula/sql"]
+    Retrieval["retrieval/*\nnormalizer/dense/sparse/hybrid/rerank"]
+    Answering["answering/*\ncitation/answer/refusal"]
+    Text2Sql["text2sql/*\nschema/planner/generator/validator/executor"]
+    Evals["evals/*\nretrieval/answer/text2sql/report"]
   end
 
   GatewayOrchestrator["knowledge_routes\n接口与解析调度"]
@@ -158,6 +173,8 @@ flowchart TB
   GatewayOrchestrator --> Parser
   Parser --> Storage
   Storage --> KB
+  Parser --> Struct
+  Struct --> CanonicalSql
   TaskAPI --> KService
   TaskAPI --> GatewayOrchestrator
   DocAPI --> Storage
@@ -166,6 +183,14 @@ flowchart TB
   StrategyAPI --> C
   A --> Struct
   Struct --> IndexSqlite
+  CanonicalSql --> IndexSqlite
+  Query --> Executors
+  Executors --> Retrieval
+  Executors --> Answering
+  Executors --> Text2Sql
+  Retrieval --> CanonicalSql
+  Answering --> CanonicalSql
+  Text2Sql --> CanonicalSql
   B --> IndexSqlite
   C --> IndexSqlite
   KService --> MetaSqlite
@@ -261,7 +286,7 @@ data/knowledge_base/libraries/{library_id}/documents/{doc_id}/
 - `apps/api-server/main.py`
   - 解析接口改异步任务化，返回 `task_id`。
   - 增加任务进度查询、文档版本、策略切换与统一查询接口。
-  - 保持单一 `A_structured` 索引构建，调用 `docs_core.ingest.storage.file_store.build_structured_index_for_doc`。
+  - 保持单一 `doc_blocks_graph_v1` 索引构建，调用 `docs_core.ingest.storage.file_store.build_structured_index_for_doc`。
 - `services/docs-core/src/docs_core/ingest/canonical/builder.py`
   - 结构化主链：统一生成 canonical structure，供后续索引与查询链路复用。
 - `services/docs-core/src/docs_core/ingest/storage/db_store.py`

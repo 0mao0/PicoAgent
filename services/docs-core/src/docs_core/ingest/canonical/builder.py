@@ -1,4 +1,5 @@
 """Docs canonical schema 构建器。"""
+from datetime import datetime
 from html.parser import HTMLParser
 import re
 from typing import Any, List, Tuple
@@ -442,6 +443,7 @@ def build_canonical_document(library_id: str, doc_id: str, title: str = "") -> C
     page_count = 0
     if blocks:
         page_count = max(block.page_idx for block in blocks) + 1
+    timestamp = datetime.utcnow().isoformat()
 
     document = CanonicalDocument(
         doc_id=doc_id,
@@ -451,6 +453,8 @@ def build_canonical_document(library_id: str, doc_id: str, title: str = "") -> C
         source_file_type="pdf",
         page_count=page_count,
         status="completed" if markdown or blocks else "pending",
+        created_at=timestamp,
+        updated_at=timestamp,
         blocks=blocks,
         outlines=outlines,
         chunks=chunks + table_chunks,

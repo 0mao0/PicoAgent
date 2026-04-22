@@ -1,0 +1,1 @@
+{"question_id":"sql_001","expected_sql":"SELECT COUNT(*) AS total_count FROM canonical_documents WHERE library_id = ?","notes":"最小 Text-to-SQL 样本：统计默认知识库文档数量"}

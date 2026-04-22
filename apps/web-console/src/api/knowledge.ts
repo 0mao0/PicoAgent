@@ -29,7 +29,7 @@ export const knowledgeApi = {
       body: JSON.stringify({ library_id: libraryId, doc_id: docId })
     }),
 
-  buildStructuredIndex: (libraryId: string, docId: string, strategy: string = 'A_structured') =>
+  buildStructuredIndex: (libraryId: string, docId: string, strategy: string = 'doc_blocks_graph_v1') =>
     request(`/knowledge/parse/structured-index`, {
       method: 'POST',
       body: JSON.stringify({ library_id: libraryId, doc_id: docId, strategy })

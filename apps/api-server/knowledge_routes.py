@@ -51,7 +51,7 @@ class KnowledgeStructuredIndexRequest(BaseModel):
 
     library_id: str
     doc_id: str
-    strategy: Optional[str] = "A_structured"
+    strategy: Optional[str] = "doc_blocks_graph_v1"
 
 
 class DocBlocksGraphRequest(BaseModel):
@@ -154,6 +154,7 @@ class ParseOrchestrator:
                 doc_id=doc_id,
                 title=node.title if node else doc_id,
             )
+            knowledge_service.save_canonical_document(canonical_document)
             file_storage.save_middle_json(
                 library_id,
                 doc_id,
@@ -166,7 +167,7 @@ class ParseOrchestrator:
             build_structured_index_for_doc(
                 library_id=library_id,
                 doc_id=doc_id,
-                strategy="A_structured",
+                strategy="doc_blocks_graph_v1",
                 options={
                     "use_llm": use_llm,
                     "llm_model": llm_model,
@@ -230,8 +231,8 @@ def normalize_parse_options(options: Optional[KnowledgeParseOptions]) -> Dict[st
 
 
 # 按策略分发文档投影构建。
-def build_projection_for_doc(library_id: str, doc_id: str, strategy: str = "A_structured") -> Dict[str, Any]:
-    if strategy != "A_structured":
+def build_projection_for_doc(library_id: str, doc_id: str, strategy: str = "doc_blocks_graph_v1") -> Dict[str, Any]:
+    if strategy != "doc_blocks_graph_v1":
         raise ValueError(f"Unsupported strategy: {strategy}")
     return build_structured_index_for_doc(library_id, doc_id, strategy)
 
@@ -294,7 +295,7 @@ async def get_parse_status(task_id: str) -> Dict[str, Any]:
 @knowledge_router.post("/parse/structured-index")
 async def build_structured_index(request: KnowledgeStructuredIndexRequest) -> Dict[str, Any]:
     try:
-        result = build_projection_for_doc(request.library_id, request.doc_id, request.strategy or "A_structured")
+        result = build_projection_for_doc(request.library_id, request.doc_id, request.strategy or "doc_blocks_graph_v1")
         return {"status": "success", "data": result}
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))

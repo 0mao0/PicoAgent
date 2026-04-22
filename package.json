@@ -18,7 +18,9 @@
     "harness:tooling": "python -m unittest tests.integration.test_01_tool_registration",
     "eval:knowledge-rag:retrieval": "python tests/evals/knowledge_rag/eval_retrieval.py",
     "eval:knowledge-rag:answer": "python tests/evals/knowledge_rag/eval_answer.py",
-    "eval:knowledge-rag": "python tests/evals/knowledge_rag/eval_retrieval.py && python tests/evals/knowledge_rag/eval_answer.py",
+    "eval:knowledge-rag:text2sql": "python tests/evals/knowledge_rag/eval_text2sql.py",
+    "eval:knowledge-rag:report": "python -c \"import sys; from pathlib import Path; sys.path.insert(0, str(Path('services/docs-core/src').resolve())); from docs_core.evals.eval_reporter import main; main()\"",
+    "eval:knowledge-rag": "python tests/evals/knowledge_rag/eval_retrieval.py && python tests/evals/knowledge_rag/eval_answer.py && python tests/evals/knowledge_rag/eval_text2sql.py",
     "docs:sync": "python tools/sync_tech_docs.py",
     "docs:check": "python tools/check_docs_suite.py",
     "docs:arch-check": "python tools/check_architecture_docs.py"

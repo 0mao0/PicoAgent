@@ -429,7 +429,7 @@ def _persist_structured_segments(
 ) -> int:
     from docs_core.knowledge_service import knowledge_service
 
-    structured_items = _build_a_structured_segment_items(
+    structured_items = _build_doc_blocks_graph_segment_items(
         result,
         llm_client=llm_client,
         llm_model=llm_model,
@@ -552,8 +552,86 @@ def _collect_media_related_block_refs(
     return result
 
 
-# 从结构化结果构建 A_structured 片段投影。
-def _build_a_structured_segment_items(
+# 追加公式摘要和参数投影项，保持解析后与图谱重建后的展示一致。
+def _append_formula_projection_items(
+    items: List[Dict[str, Any]],
+    *,
+    block_uid: str,
+    page_idx: int,
+    page_seq: int,
+    block_seq: int,
+    meta: Dict[str, Any],
+) -> None:
+    formula_params = (meta.get("formula_params") or []) if isinstance(meta, dict) else []
+    formula_summary = str(meta.get("formula_summary") or "").strip() if isinstance(meta, dict) else ""
+    formula_number = str(meta.get("formula_number") or "").strip() if isinstance(meta, dict) else ""
+
+    if formula_summary:
+        items.append(
+            {
+                "id": f"{block_uid}#summary",
+                "item_type": "formula_summary",
+                "title": f"公式摘要{f' ({formula_number})' if formula_number else ''}",
+                "content": formula_summary,
+                "meta": {
+                    "block_uid": block_uid,
+                    "block_id": block_uid,
+                    "source_block_id": block_uid,
+                    "formula_block_uid": block_uid,
+                    "formula_number": formula_number or None,
+                    "page_idx": page_idx,
+                    "page_seq": page_seq,
+                    "page": page_seq,
+                    "block_seq": block_seq,
+                    "item_type": "formula_summary",
+                },
+                "order_index": len(items),
+            }
+        )
+
+    for param_index, param in enumerate(formula_params):
+        symbol = str(param.get("symbol") or "").strip()
+        description = str(param.get("description") or "").strip()
+        if not symbol or not description:
+            continue
+        content_parts = [f"{symbol}: {description}"]
+        unit = str(param.get("unit") or "").strip()
+        reference_hint = str(param.get("reference_hint") or "").strip()
+        if unit:
+            content_parts.append(f"单位 {unit}")
+        if reference_hint:
+            content_parts.append(f"来源 {reference_hint}")
+        items.append(
+            {
+                "id": f"{block_uid}#param:{param_index + 1}",
+                "item_type": "formula_param",
+                "title": symbol,
+                "content": " | ".join(content_parts),
+                "meta": {
+                    "block_uid": block_uid,
+                    "block_id": block_uid,
+                    "source_block_id": block_uid,
+                    "formula_block_uid": block_uid,
+                    "formula_number": formula_number or None,
+                    "page_idx": page_idx,
+                    "page_seq": page_seq,
+                    "page": page_seq,
+                    "block_seq": block_seq,
+                    "parameter_index": param_index + 1,
+                    "symbol": symbol,
+                    "unit": unit or None,
+                    "reference_hint": reference_hint or None,
+                    "extracted_by": param.get("extracted_by"),
+                    "confidence": param.get("confidence"),
+                    "item_type": "formula_param",
+                },
+                "order_index": len(items),
+            }
+        )
+
+
+# 从结构化结果构建 doc_blocks_graph_v1 片段投影。
+def _build_doc_blocks_graph_segment_items(
     result: StructuredResult,
     llm_client: Any = None,
     llm_model: Optional[str] = None,
@@ -693,73 +771,14 @@ def _build_a_structured_segment_items(
 
         if block_type != "equation_interline":
             continue
-
-        formula_params = (meta.get("formula_params") or []) if isinstance(meta, dict) else []
-        formula_summary = str(meta.get("formula_summary") or "").strip() if isinstance(meta, dict) else ""
-        formula_number = str(meta.get("formula_number") or "").strip() if isinstance(meta, dict) else ""
-
-        if formula_summary:
-            items.append(
-                {
-                    "id": f"{block_uid}#summary",
-                    "item_type": "formula_summary",
-                    "title": f"公式摘要{f' ({formula_number})' if formula_number else ''}",
-                    "content": formula_summary,
-                    "meta": {
-                        "block_uid": block_uid,
-                        "block_id": block_uid,
-                        "source_block_id": block_uid,
-                        "formula_block_uid": block_uid,
-                        "formula_number": formula_number or None,
-                        "page_idx": page_idx,
-                        "page_seq": page_seq,
-                        "page": page_seq,
-                        "block_seq": block_seq,
-                        "item_type": "formula_summary",
-                    },
-                    "order_index": len(items),
-                }
-            )
-
-        for param_index, param in enumerate(formula_params):
-            symbol = str(param.get("symbol") or "").strip()
-            description = str(param.get("description") or "").strip()
-            if not symbol or not description:
-                continue
-            content_parts = [f"{symbol}: {description}"]
-            unit = str(param.get("unit") or "").strip()
-            reference_hint = str(param.get("reference_hint") or "").strip()
-            if unit:
-                content_parts.append(f"单位 {unit}")
-            if reference_hint:
-                content_parts.append(f"来源 {reference_hint}")
-            items.append(
-                {
-                    "id": f"{block_uid}#param:{param_index + 1}",
-                    "item_type": "formula_param",
-                    "title": symbol,
-                    "content": " | ".join(content_parts),
-                    "meta": {
-                        "block_uid": block_uid,
-                        "block_id": block_uid,
-                        "source_block_id": block_uid,
-                        "formula_block_uid": block_uid,
-                        "formula_number": formula_number or None,
-                        "page_idx": page_idx,
-                        "page_seq": page_seq,
-                        "page": page_seq,
-                        "block_seq": block_seq,
-                        "parameter_index": param_index + 1,
-                        "symbol": symbol,
-                        "unit": unit or None,
-                        "reference_hint": reference_hint or None,
-                        "extracted_by": param.get("extracted_by"),
-                        "confidence": param.get("confidence"),
-                        "item_type": "formula_param",
-                    },
-                    "order_index": len(items),
-                }
-            )
+        _append_formula_projection_items(
+            items,
+            block_uid=block_uid,
+            page_idx=page_idx,
+            page_seq=page_seq,
+            block_seq=block_seq,
+            meta=meta,
+        )
 
     return items
 
@@ -768,7 +787,7 @@ def _build_a_structured_segment_items(
 def build_structured_index_for_doc(
     library_id: str,
     doc_id: str,
-    strategy: str = "A_structured",
+    strategy: str = "doc_blocks_graph_v1",
     options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     opts = options or {}
@@ -1304,8 +1323,15 @@ def _rebuild_graph_projection(graph_data: Dict[str, Any]) -> None:
 # 从图谱节点重建结构化片段，确保合并和层级调整能实时投影。
 def _build_structured_segment_items_from_graph(graph_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     excluded_types = {"page_header", "page_footer", "page_number", "header", "footer"}
+    child_nodes_by_parent: Dict[str, List[Dict[str, Any]]] = {}
+    active_nodes = _sort_graph_nodes(_get_active_graph_nodes(graph_data))
+    for node in active_nodes:
+        parent_uid = _normalize_block_uid(node.get("parent_uid"))
+        if not parent_uid:
+            continue
+        child_nodes_by_parent.setdefault(parent_uid, []).append(node)
     items: List[Dict[str, Any]] = []
-    for order_index, node in enumerate(_sort_graph_nodes(_get_active_graph_nodes(graph_data))):
+    for order_index, node in enumerate(active_nodes):
         block_uid = _normalize_block_uid(node.get("block_uid") or node.get("id"))
         block_type = str(node.get("block_type") or "segment").strip() or "segment"
         if block_type in excluded_types:
@@ -1313,11 +1339,14 @@ def _build_structured_segment_items_from_graph(graph_data: Dict[str, Any]) -> Li
         plain_text = str(node.get("plain_text") or "").strip()
         title_path = str(node.get("title_path") or "").strip()
         title = plain_text or title_path or block_uid
+        page_idx = int(node.get("page_idx") or 0)
+        page_seq = page_idx + 1
+        block_seq = int(node.get("block_seq") or 0)
         meta = {
             "block_uid": block_uid,
             "block_type": block_type,
-            "page_idx": node.get("page_idx"),
-            "block_seq": node.get("block_seq"),
+            "page_idx": page_idx,
+            "block_seq": block_seq,
             "title_path": node.get("title_path"),
             "caption": node.get("caption"),
             "footnote": node.get("footnote"),
@@ -1336,13 +1365,44 @@ def _build_structured_segment_items_from_graph(graph_data: Dict[str, Any]) -> Li
             "derived_level": node.get("derived_level"),
             "order_index": order_index,
         }
+        if block_type == "equation_interline":
+            explanation_lines = [
+                str(child.get("plain_text") or "").strip()
+                for child in child_nodes_by_parent.get(block_uid, [])
+                if str(child.get("block_type") or "").strip() in {"paragraph", "list"}
+                and str(child.get("plain_text") or "").strip()
+            ]
+            formula_semantics = build_formula_representations(
+                formula_text=str(node.get("math_content") or plain_text or ""),
+                explanation_lines=explanation_lines,
+                use_llm=False,
+            )
+            meta.update(
+                {
+                    "formula_number": formula_semantics.get("formula_number"),
+                    "formula_param_count": len(formula_semantics.get("formula_params") or []),
+                    "formula_params": formula_semantics.get("formula_params") or None,
+                    "formula_summary": formula_semantics.get("formula_summary"),
+                    "formula_llm_status": formula_semantics.get("llm_status"),
+                }
+            )
         items.append({
             "id": block_uid,
             "item_type": block_type,
             "title": title,
             "content": plain_text or title,
             "meta": {key: value for key, value in meta.items() if value is not None},
+            "order_index": len(items),
         })
+        if block_type == "equation_interline":
+            _append_formula_projection_items(
+                items,
+                block_uid=block_uid,
+                page_idx=page_idx,
+                page_seq=page_seq,
+                block_seq=block_seq,
+                meta=meta,
+            )
     return items
 
 
@@ -1355,7 +1415,7 @@ def _sync_structured_segments_after_node_update(
     from docs_core.knowledge_service import knowledge_service
 
     updated_items = _build_structured_segment_items_from_graph(graph_data)
-    return knowledge_service.save_document_segments(doc_id, library_id, "A_structured", updated_items)
+    return knowledge_service.save_document_segments(doc_id, library_id, "doc_blocks_graph_v1", updated_items)
 
 
 # 将源节点内容并入目标节点，并移除源节点。
@@ -2302,7 +2362,7 @@ def extract_structured_items_from_markdown(
 
 __all__ = [
     "FileStorage",
-    "_build_a_structured_segment_items",
+    "_build_doc_blocks_graph_segment_items",
     "build_structured_index_for_doc",
     "extract_structured_items_from_markdown",
     "file_storage",

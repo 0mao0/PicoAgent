@@ -121,7 +121,7 @@ Admin B区（文档生命周期）
   -> 未解析（原文预览 + 解析 + 共享）
   -> 解析中（任务进度可视化）
   -> 已解析（B1原文 + B2 Markdown可编辑）
-  -> 结构化主链（A_structured）
+  -> 结构化主链（doc_blocks_graph_v1）
 ```
 
 ```text
@@ -129,6 +129,12 @@ docs-core 后端实现
   -> parser: 对接 MinerU，输出原始解析结果目录
   -> structured: 完成结构化构建、索引落盘与文档存储
   -> knowledge_service.py: 提供知识库元数据与索引服务门面
+  -> query/: 负责问题理解、意图解析与执行规划
+  -> executors/: 负责 content/table/formula/sql 问答链编排
+  -> retrieval/: 负责召回、融合、重排
+  -> answering/: 负责回答拼装与引用构造
+  -> text2sql/: 负责 schema link、SQL planning / generation / validation / execution
+  -> evals/: 负责 retrieval / answer / text2sql 评测与报告
 ```
 
 ```text
