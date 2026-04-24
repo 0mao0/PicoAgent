@@ -14,7 +14,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from docs_core.ingest.canonical import build_canonical_document
 from docs_core.knowledge_service import knowledge_service
 from docs_core.ingest.parser.mineru_parser import mineru_parser
 from docs_core.query.contracts import KnowledgeQueryRequest, KnowledgeQueryResponse
@@ -148,18 +147,6 @@ class ParseOrchestrator:
                 with open(markdown_path, "r", encoding="utf-8") as handle:
                     file_storage.save_markdown(library_id, doc_id, handle.read())
             file_storage.save_parse_artifacts(library_id, doc_id, temp_output_dir)
-            node = knowledge_service.get_node(doc_id)
-            canonical_document = build_canonical_document(
-                library_id=library_id,
-                doc_id=doc_id,
-                title=node.title if node else doc_id,
-            )
-            knowledge_service.save_canonical_document(canonical_document)
-            file_storage.save_middle_json(
-                library_id,
-                doc_id,
-                canonical_document.model_dump(mode="json"),
-            )
 
             self._update_progress(task_id, doc_id, progress=70, stage="indexing")
             use_llm = bool(parse_options.get("use_llm", True))

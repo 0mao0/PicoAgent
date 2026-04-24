@@ -18,11 +18,28 @@ def normalize_candidate_scores(candidates: List[RetrievedItem]) -> List[Retrieve
     return normalized
 
 
+# 判断当前候选是否来自目录/目次类块。
+def is_toc_candidate(item: RetrievedItem) -> bool:
+    section_path = str(item.metadata.get("section_path") or "")
+    title = str(item.title or "")
+    text = str(item.text or "")
+    chunk_type = str(item.metadata.get("chunk_type") or item.entity_type or "")
+    page_idx = int(item.metadata.get("page_idx", 0) or 0)
+    normalized_scope = f"{section_path}\n{title}\n{text}"
+    if "目次" in normalized_scope or "目录" in normalized_scope:
+        return True
+    if page_idx == 0 and chunk_type in {"outline_anchor", "list_procedure"}:
+        return True
+    return False
+
+
 # 为不同来源分配第一版融合权重。
-def get_source_weight(source_kind: str) -> float:
+def get_source_weight(source_kind: str, task_type: str) -> float:
     source_weights = {
         "canonical_dense": 1.15,
         "canonical_sparse": 1.20,
+        "toc_dense": 1.05 if task_type == "locate_qa" else 0.18,
+        "toc_sparse": 1.10 if task_type == "locate_qa" else 0.12,
     }
     return source_weights.get(source_kind, 1.0)
 
@@ -30,6 +47,8 @@ def get_source_weight(source_kind: str) -> float:
 # 按任务类型给候选加轻量业务权重。
 def get_task_type_bonus(task_type: str, item: RetrievedItem) -> float:
     chunk_type = str(item.metadata.get("chunk_type") or "")
+    if is_toc_candidate(item):
+        return 0.12 if task_type == "locate_qa" else -0.35
     if task_type == "table_qa" and chunk_type.startswith("table_"):
         return 0.25
     if task_type == "locate_qa" and chunk_type in {"outline_anchor", "title"}:
@@ -62,6 +81,21 @@ def apply_metadata_filter(candidates: List[RetrievedItem], filters: KnowledgeQue
     return filtered
 
 
+# 在非定位问答里优先保留正文证据，目录仅作兜底候选。
+def prefer_non_toc_candidates(
+    candidates: List[RetrievedItem],
+    task_type: str,
+    top_k: int,
+) -> List[RetrievedItem]:
+    limit = max(1, min(20, top_k))
+    if task_type == "locate_qa":
+        return candidates[:limit]
+    non_toc_candidates = [item for item in candidates if not is_toc_candidate(item)]
+    if non_toc_candidates:
+        return non_toc_candidates[:limit]
+    return candidates[:limit]
+
+
 # 融合多来源候选并输出最终排序结果。
 def fuse_candidates(
     source_candidates: Dict[str, List[RetrievedItem]],
@@ -74,7 +108,7 @@ def fuse_candidates(
 
     for source_kind, candidates in source_candidates.items():
         normalized = normalize_candidate_scores(candidates)
-        source_weight = get_source_weight(source_kind)
+        source_weight = get_source_weight(source_kind, task_type)
         source_debug[source_kind] = {
             "input_hits": len(candidates),
             "weight": source_weight,
@@ -118,11 +152,10 @@ def fuse_candidates(
         ),
         reverse=True,
     )
-    limit = max(1, min(20, top_k))
-    return ranked[:limit], {
+    preferred = prefer_non_toc_candidates(ranked, task_type, top_k)
+    return preferred, {
         "sources": source_debug,
         "deduped_hits": len(fused),
         "filtered_hits": len(filtered),
-        "returned_hits": min(len(ranked), limit),
+        "returned_hits": len(preferred),
     }
-

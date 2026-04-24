@@ -6,18 +6,46 @@
     :width="560"
     @close="drawerVisible = false"
   >
-    <template #extra>
-      <a-space size="small">
-        <a-button type="primary" :loading="running" @click="runSuite()">
-          {{ running ? '评测执行中' : '重新运行' }}
-        </a-button>
-        <a-button :disabled="running" @click="resetCases()">
-          还原题库
-        </a-button>
-      </a-space>
-    </template>
+    <template #extra><span /></template>
 
     <div class="knowledge-eval-drawer">
+      <div v-if="currentDataset" class="knowledge-eval-dataset-card">
+        <div class="dataset-card-title">{{ currentDataset.title }}</div>
+        <div v-if="currentDataset.description" class="dataset-card-description">
+          {{ currentDataset.description }}
+        </div>
+        <a-radio-group
+          v-if="datasetButtonOptions.length"
+          :value="selectedDatasetId"
+          size="small"
+          button-style="solid"
+          class="dataset-switch-group"
+          @update:value="handleDatasetChange"
+        >
+          <a-radio-button
+            v-for="option in datasetButtonOptions"
+            :key="option.value"
+            :value="option.value"
+            :disabled="running"
+          >
+            {{ option.label }}
+          </a-radio-button>
+        </a-radio-group>
+        <div class="dataset-action-row">
+          <a-button type="primary" size="small" :loading="running" @click="runSuite()">
+            {{ running ? '评测执行中' : currentDatasetRunLabel }}
+          </a-button>
+          <a-button size="small" :disabled="running || !hasCurrentDatasetState" @click="resetCases()">
+            还原题库
+          </a-button>
+        </div>
+        <div class="dataset-card-meta">
+          <span>可见题数：{{ currentDataset.visible_question_count }}</span>
+          <span>SQL 题：{{ currentDataset.sql_question_count }}</span>
+          <span v-if="currentDataset.version">版本：{{ currentDataset.version }}</span>
+        </div>
+      </div>
+
       <div v-if="summary" class="knowledge-eval-summary">
         <a-tooltip title="总分 = 检索分、回答健康度、回答正确率的简单平均值。若没有可计算的回答正确率，则只平均已有分项。">
           <div class="summary-card">
@@ -142,6 +170,20 @@
             <div v-if="item.conclusion" class="eval-rich-content" v-html="renderRichText(item.conclusion)" />
           </div>
 
+          <div v-if="item.goldAnswer || item.standardThinking" class="eval-section">
+            <div class="eval-section-header">
+              <div class="eval-section-title">标准参考</div>
+            </div>
+            <div v-if="item.goldAnswer" class="eval-standard-block">
+              <div class="eval-standard-label">标准答案</div>
+              <div class="eval-rich-content" v-html="renderRichText(item.goldAnswer)" />
+            </div>
+            <div v-if="item.standardThinking" class="eval-standard-block">
+              <div class="eval-standard-label">思考过程</div>
+              <div class="eval-rich-content" v-html="renderRichText(item.standardThinking)" />
+            </div>
+          </div>
+
           <div v-if="item.citations.length" class="eval-section">
             <div class="eval-section-header">
               <div class="eval-section-title">检索片段 (Top 5)</div>
@@ -186,17 +228,18 @@
  * 知识库评测抽屉组件。
  * 负责拉取题库、顺序触发 KnowledgeChat 问答，并展示逐题结果与汇总分数。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { renderMarkdownToHtml } from '@angineer/docs-ui'
 import {
   knowledgeApi,
   type KnowledgeEvalAnswerDetail,
+  type KnowledgeEvalDataset,
   type KnowledgeEvalQuestion,
   type KnowledgeEvalSummary
 } from '@/api/knowledge'
 
-type EvalCaseStatus = 'pending' | 'running' | 'passed' | 'failed' | 'error'
+type EvalCaseStatus = 'pending' | 'running' | 'answered' | 'passed' | 'failed' | 'error'
 
 type EvalCitation = {
   target_id: string
@@ -213,6 +256,8 @@ type EvalCaseState = {
   question: string
   difficulty: string
   tags: string[]
+  goldAnswer: string
+  standardThinking: string
   status: EvalCaseStatus
   conclusion: string
   answerText: string
@@ -224,6 +269,14 @@ type EvalCaseState = {
   failedChecks: Array<{ type?: string; keywords?: string[] }>
   retrievalScore: number | null
   answerHealthScore: number | null
+}
+
+type DatasetEvalState = {
+  questions: KnowledgeEvalQuestion[]
+  cases: EvalCaseState[]
+  summary: KnowledgeEvalSummary | null
+  resultFilter: 'all' | 'passed' | 'failed'
+  expandedCitationQuestionIds: string[]
 }
 
 interface Props {
@@ -239,6 +292,10 @@ const props = defineProps<Props>()
 const drawerVisible = ref(false)
 const running = ref(false)
 const autoRunEnabled = ref(false)
+const datasets = ref<KnowledgeEvalDataset[]>([])
+const datasetStates = ref<Record<string, DatasetEvalState>>({})
+const selectedDatasetId = ref('')
+const loadedDatasetId = ref('')
 const questions = ref<KnowledgeEvalQuestion[]>([])
 const cases = ref<EvalCaseState[]>([])
 const summary = ref<KnowledgeEvalSummary | null>(null)
@@ -246,10 +303,23 @@ const resultFilter = ref<'all' | 'passed' | 'failed'>('all')
 const expandedCitationQuestionIds = ref<string[]>([])
 
 const completedCount = computed(() => cases.value.filter(item => (
-  item.status === 'passed' || item.status === 'failed' || item.status === 'error'
+  item.status === 'answered' || item.status === 'passed' || item.status === 'failed' || item.status === 'error'
 )).length)
 const passedCount = computed(() => cases.value.filter(item => item.status === 'passed').length)
 const failedCount = computed(() => cases.value.filter(item => item.status === 'failed' || item.status === 'error').length)
+const currentDataset = computed(() => (
+  datasets.value.find(item => item.dataset_id === selectedDatasetId.value) || null
+))
+const datasetButtonOptions = computed(() => datasets.value.map((item, index) => ({
+  label: buildDatasetButtonLabel(item, index),
+  value: item.dataset_id
+})))
+const hasCurrentDatasetState = computed(() => {
+  const datasetId = selectedDatasetId.value
+  return Boolean(datasetId && datasetStates.value[datasetId])
+})
+const currentDatasetRunLabel = computed(() => currentDatasetHasResult.value ? '重新评测' : '运行评测')
+const currentDatasetHasResult = computed(() => Boolean(summary.value || completedCount.value))
 const correctRate = computed(() => {
   if (!cases.value.length) {
     return null
@@ -269,23 +339,29 @@ const filteredCases = computed(() => {
 })
 
 /**
- * 拉取评测题目列表，并准备前端状态。
+ * 组装题库按钮文案。
  */
-const fetchQuestions = async () => {
-  const result = await knowledgeApi.getEvalQuestions()
-  questions.value = Array.isArray(result?.questions) ? result.questions : []
-  resetCases()
+function buildDatasetButtonLabel(dataset: KnowledgeEvalDataset, index: number) {
+  const title = String(dataset.title || '').trim()
+  const compactTitle = title
+    .replace(/^知识库基线评测集\s*\d*$/u, '基线')
+    .replace(/^eval[_-]?\d*[\(\（]?/i, '')
+    .replace(/[\)\)]\s*$/u, '')
+    .trim()
+  return compactTitle ? `题库${index + 1}（${compactTitle}）` : `题库${index + 1}`
 }
 
 /**
- * 将题库恢复为待运行状态，便于重新开始一次完整评测。
+ * 根据题目列表生成初始用例状态。
  */
-const resetCases = () => {
-  cases.value = questions.value.map(question => ({
+function buildCasesFromQuestions(sourceQuestions: KnowledgeEvalQuestion[]): EvalCaseState[] {
+  return sourceQuestions.map(question => ({
     questionId: question.question_id,
     question: question.question,
     difficulty: question.difficulty || '',
     tags: Array.isArray(question.tags) ? question.tags : [],
+    goldAnswer: question.gold_answer || '',
+    standardThinking: question.thought_process || '',
     status: 'pending',
     conclusion: '',
     answerText: '',
@@ -298,6 +374,102 @@ const resetCases = () => {
     retrievalScore: null,
     answerHealthScore: null
   }))
+}
+
+/**
+ * 创建单个题库的默认状态。
+ */
+function createDatasetState(sourceQuestions: KnowledgeEvalQuestion[]): DatasetEvalState {
+  return {
+    questions: sourceQuestions,
+    cases: buildCasesFromQuestions(sourceQuestions),
+    summary: null,
+    resultFilter: 'all',
+    expandedCitationQuestionIds: []
+  }
+}
+
+/**
+ * 将当前视图状态保存回题库缓存。
+ */
+function persistCurrentDatasetState() {
+  const datasetId = selectedDatasetId.value || loadedDatasetId.value
+  if (!datasetId) {
+    return
+  }
+  datasetStates.value[datasetId] = {
+    questions: questions.value,
+    cases: cases.value,
+    summary: summary.value,
+    resultFilter: resultFilter.value,
+    expandedCitationQuestionIds: expandedCitationQuestionIds.value
+  }
+}
+
+/**
+ * 从题库缓存恢复当前视图状态。
+ */
+function restoreDatasetState(datasetId: string) {
+  const cachedState = datasetStates.value[datasetId]
+  if (!cachedState) {
+    return false
+  }
+  questions.value = cachedState.questions
+  cases.value = cachedState.cases
+  summary.value = cachedState.summary
+  resultFilter.value = cachedState.resultFilter
+  expandedCitationQuestionIds.value = cachedState.expandedCitationQuestionIds
+  loadedDatasetId.value = datasetId
+  return true
+}
+
+watch(
+  [questions, cases, summary, resultFilter, expandedCitationQuestionIds],
+  () => {
+    persistCurrentDatasetState()
+  },
+  { deep: true }
+)
+
+/**
+ * 拉取题库列表，并默认选中第一套题库。
+ */
+const fetchDatasets = async () => {
+  const result = await knowledgeApi.getEvalDatasets()
+  datasets.value = Array.isArray(result?.datasets) ? result.datasets : []
+  if (!selectedDatasetId.value && datasets.value.length) {
+    selectedDatasetId.value = datasets.value[0].dataset_id
+  }
+}
+
+/**
+ * 拉取评测题目列表，并准备前端状态。
+ */
+const fetchQuestions = async (datasetId?: string) => {
+  const targetDatasetId = datasetId || selectedDatasetId.value
+  const result = await knowledgeApi.getEvalQuestions(targetDatasetId || undefined)
+  const nextDatasets = Array.isArray(result?.datasets) ? result.datasets : []
+  if (nextDatasets.length) {
+    datasets.value = nextDatasets
+  }
+  const resolvedDatasetId = String(
+    result?.selected_dataset?.dataset_id || targetDatasetId || datasets.value[0]?.dataset_id || ''
+  )
+  selectedDatasetId.value = resolvedDatasetId
+  loadedDatasetId.value = resolvedDatasetId
+  const nextQuestions = Array.isArray(result?.questions) ? result.questions : []
+  const nextState = createDatasetState(nextQuestions)
+  datasetStates.value[resolvedDatasetId] = nextState
+  restoreDatasetState(resolvedDatasetId)
+}
+
+/**
+ * 将题库恢复为待运行状态，便于重新开始一次完整评测。
+ */
+const resetCases = () => {
+  cases.value = buildCasesFromQuestions(questions.value)
+  summary.value = null
+  resultFilter.value = 'all'
   expandedCitationQuestionIds.value = []
 }
 
@@ -313,15 +485,20 @@ const applyAnswerReport = (details: KnowledgeEvalAnswerDetail[]) => {
     if (!detail) {
       return item
     }
+    const answerPassed = computeAnswerPassed(detail)
     return {
       ...item,
+      status: typeof answerPassed === 'boolean' ? (answerPassed ? 'passed' : 'failed') : item.status,
       answerText: detail.answer || item.answerText,
+      goldAnswer: detail.gold_answer || item.goldAnswer,
+      standardThinking: detail.thought_process || item.standardThinking,
       thinking: item.thinking || buildThinkingText(detail),
       taskTypeLabel: getTaskTypeLabel(detail.task_type),
       strategyLabel: detail.strategy || '',
       citations: Array.isArray(detail.citations) ? detail.citations : item.citations,
       failedChecks: Array.isArray(detail.failed_correctness_checks) ? detail.failed_correctness_checks : [],
-      answerHealthScore: computeAnswerHealthScore(detail)
+      answerHealthScore: computeAnswerHealthScore(detail),
+      error: answerPassed === false ? '答案未通过标准规则校验。' : item.error
     }
   })
 }
@@ -335,7 +512,7 @@ const applyRetrievalReport = (details: Array<Record<string, any>>) => {
   )
   cases.value = cases.value.map(item => {
     const detail = detailMap.get(item.questionId)
-    if (!detail) {
+    if (!detail || detail.retrieval_evaluated === false) {
       return item
     }
     const passed = computeRetrievalPassed(detail)
@@ -405,6 +582,16 @@ const computeRetrievalScore = (detail: Record<string, any>) => {
 }
 
 /**
+ * 判断单题回答是否通过正确性校验。
+ */
+const computeAnswerPassed = (detail: KnowledgeEvalAnswerDetail) => {
+  if (!detail.answer_correct_checked) {
+    return null
+  }
+  return Number(detail.answer_correct || 0) === 1
+}
+
+/**
  * 生成更符合检索评测场景的单题结论。
  */
 const buildRetrievalConclusion = (detail: Record<string, any>) => {
@@ -438,9 +625,33 @@ const computeAnswerHealthScore = (detail: KnowledgeEvalAnswerDetail) => {
  * 确保抽屉打开前已经拿到题库数据。
  */
 const ensureQuestions = async () => {
-  if (!questions.value.length) {
-    await fetchQuestions()
+  if (!datasets.value.length) {
+    await fetchDatasets()
   }
+  if (!selectedDatasetId.value && datasets.value.length) {
+    selectedDatasetId.value = datasets.value[0].dataset_id
+  }
+  if (selectedDatasetId.value && restoreDatasetState(selectedDatasetId.value)) {
+    return
+  }
+  if (!questions.value.length || loadedDatasetId.value !== selectedDatasetId.value) {
+    await fetchQuestions(selectedDatasetId.value)
+  }
+}
+
+/**
+ * 切换题库后刷新题目列表。
+ */
+const handleDatasetChange = async (datasetId: string) => {
+  if (running.value || !datasetId || datasetId === loadedDatasetId.value) {
+    return
+  }
+  persistCurrentDatasetState()
+  selectedDatasetId.value = datasetId
+  if (restoreDatasetState(datasetId)) {
+    return
+  }
+  await fetchQuestions(datasetId)
 }
 
 /**
@@ -469,14 +680,22 @@ const runSuite = async (options?: { triggeredBy?: string }) => {
       item.thinking = response.queryChain || ''
       item.citations = Array.isArray(response.citations) ? response.citations : []
       if (item.status === 'running') {
-        item.status = 'passed'
+        item.status = 'answered'
       }
     }
-    const report = await knowledgeApi.runEvalSuite()
+    const report = await knowledgeApi.runEvalSuite(selectedDatasetId.value || undefined)
+    if (Array.isArray(report.available_datasets) && report.available_datasets.length) {
+      datasets.value = report.available_datasets
+    }
+    if (report.selected_dataset?.dataset_id) {
+      selectedDatasetId.value = report.selected_dataset.dataset_id
+      loadedDatasetId.value = report.selected_dataset.dataset_id
+    }
     summary.value = report.report?.summary || null
     applyAnswerReport(report.report?.answer?.details || [])
     applyRetrievalReport(Array.isArray(report.report?.retrieval?.details) ? report.report.retrieval.details : [])
-    message.success(options?.triggeredBy ? `${options.triggeredBy}后已完成知识库评测` : '知识库评测已完成')
+    persistCurrentDatasetState()
+    message.success(options?.triggeredBy ? `${options?.triggeredBy}后已完成知识库评测` : '知识库评测已完成')
   } catch (error) {
     const detail = (error as any)?.response?.data?.detail || (error as any)?.message || '未知错误'
     const runningItem = cases.value.find(item => item.status === 'running')
@@ -484,6 +703,7 @@ const runSuite = async (options?: { triggeredBy?: string }) => {
       runningItem.status = 'error'
       runningItem.error = detail
     }
+    persistCurrentDatasetState()
     message.error(`知识库评测失败: ${detail}`)
   } finally {
     running.value = false
@@ -528,6 +748,7 @@ const getStatusColor = (status: EvalCaseStatus) => {
   if (status === 'passed') return 'green'
   if (status === 'failed') return 'red'
   if (status === 'running') return 'blue'
+  if (status === 'answered') return 'gold'
   if (status === 'error') return 'orange'
   return 'default'
 }
@@ -539,6 +760,7 @@ const getStatusText = (status: EvalCaseStatus) => {
   if (status === 'passed') return '通过'
   if (status === 'failed') return '未通过'
   if (status === 'running') return '执行中'
+  if (status === 'answered') return '待判定'
   if (status === 'error') return '异常'
   return '待运行'
 }
@@ -573,6 +795,49 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.knowledge-eval-dataset-card {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color, #e8e8e8);
+  background: var(--bg-secondary, #fff);
+}
+
+.dataset-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, rgba(0, 0, 0, 0.88));
+}
+
+.dataset-card-description {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary, rgba(0, 0, 0, 0.55));
+}
+
+.dataset-switch-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dataset-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dataset-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, rgba(0, 0, 0, 0.45));
 }
 
 .knowledge-eval-summary {
@@ -716,6 +981,16 @@ defineExpose({
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid color-mix(in srgb, var(--border-color, #e8e8e8) 84%, transparent);
+}
+
+.eval-standard-block + .eval-standard-block {
+  margin-top: 12px;
+}
+
+.eval-standard-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, rgba(0, 0, 0, 0.55));
 }
 
 .eval-section-header {
@@ -891,6 +1166,10 @@ defineExpose({
 
 .knowledge-eval-item.status-running {
   border-color: rgba(22, 119, 255, 0.35);
+}
+
+.knowledge-eval-item.status-answered {
+  border-color: rgba(250, 173, 20, 0.32);
 }
 
 .knowledge-eval-item.status-passed {

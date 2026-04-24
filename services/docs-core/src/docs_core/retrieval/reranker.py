@@ -2,6 +2,7 @@
 from typing import List
 
 from docs_core.query.contracts import RetrievedItem
+from docs_core.retrieval.hybrid_retriever import is_toc_candidate
 from docs_core.retrieval.query_normalizer import build_query_phrases, contains_clause_ref, extract_clause_refs, normalize_match_text
 
 
@@ -49,6 +50,8 @@ def rerank_candidates(query: str, task_type: str, candidates: List[RetrievedItem
             bonus += 0.12
         if task_type == "locate_qa" and str(next_item.metadata.get("chunk_type") or "") in {"outline_anchor", "title"}:
             bonus += 0.08
+        if is_toc_candidate(next_item):
+            bonus += 0.10 if task_type == "locate_qa" else -0.20
         next_item.rerank_score = round(float(next_item.rerank_score or 0.0) + bonus, 6)
         reranked.append(next_item)
     return sorted(

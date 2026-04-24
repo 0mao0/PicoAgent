@@ -19,6 +19,11 @@ def score_text(query_tokens: Iterable[str], title: str, content: str) -> float:
     return score
 
 
+# 当前 dense 仍是内存打分实现，需要先把足够多的 chunk 拉回本地再排序。
+def resolve_dense_scan_limit(request_top_k: int) -> int:
+    return max(400, request_top_k * 80)
+
+
 class DenseRetriever:
     """从 canonical chunks 中召回语义相关候选。"""
 
@@ -36,7 +41,7 @@ class DenseRetriever:
             chunks = knowledge_service.list_canonical_chunks(
                 doc_id=node.id,
                 keyword=None,
-                limit=max(50, request.top_k * 12),
+                limit=resolve_dense_scan_limit(request.top_k),
             )
             for chunk in chunks:
                 score = score_text(query_tokens, chunk.section_path, chunk.text)

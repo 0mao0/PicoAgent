@@ -2,8 +2,9 @@
 import json
 from typing import Any, Dict
 
-from docs_core.evals.eval_answer import evaluate_answers, load_jsonl as load_answer_jsonl, run_predictions as run_answer_predictions, resolve_eval_data_dir as resolve_answer_eval_data_dir
-from docs_core.evals.eval_retrieval import evaluate_retrieval, load_jsonl as load_retrieval_jsonl, run_predictions as run_retrieval_predictions
+from docs_core.evals.dataset_loader import load_eval_answer_rows, load_eval_questions, load_eval_retrieval_rows, load_eval_sql_rows
+from docs_core.evals.eval_answer import evaluate_answers, run_predictions as run_answer_predictions
+from docs_core.evals.eval_retrieval import evaluate_retrieval, run_predictions as run_retrieval_predictions
 from docs_core.evals.eval_text2sql import evaluate_text2sql, run_predictions as run_sql_predictions
 
 
@@ -16,12 +17,11 @@ def average_scores(*values: Any) -> float:
 
 
 # 聚合 retrieval、answer、text2sql 三类评测结果。
-def build_eval_suite_report() -> Dict[str, Any]:
-    base_dir = resolve_answer_eval_data_dir()
-    questions = load_answer_jsonl(base_dir / "questions.jsonl")
-    gold_retrieval_rows = load_retrieval_jsonl(base_dir / "gold_retrieval.jsonl")
-    gold_answer_rows = load_answer_jsonl(base_dir / "gold_answers.jsonl")
-    gold_sql_rows = load_answer_jsonl(base_dir / "gold_sql.jsonl")
+def build_eval_suite_report(dataset_id: str | None = None) -> Dict[str, Any]:
+    questions = load_eval_questions(dataset_id=dataset_id)
+    gold_retrieval_rows = load_eval_retrieval_rows(dataset_id=dataset_id)
+    gold_answer_rows = load_eval_answer_rows(dataset_id=dataset_id)
+    gold_sql_rows = load_eval_sql_rows(dataset_id=dataset_id)
     gold_retrieval = {str(row.get("question_id") or ""): row for row in gold_retrieval_rows}
     gold_answers = {str(row.get("question_id") or ""): row for row in gold_answer_rows}
     gold_sql = {str(row.get("question_id") or ""): row for row in gold_sql_rows if row.get("question_id")}

@@ -147,28 +147,54 @@ class KnowledgeDocumentBatchBlockOperation(BaseModel):
 
 
 # 读取知识库评测题集，并按需排除 SQL 题目。
-def _load_knowledge_eval_questions(include_sql: bool = False) -> List[Dict[str, Any]]:
-    from docs_core.evals.eval_answer import load_jsonl, resolve_eval_data_dir
+def _load_knowledge_eval_questions(include_sql: bool = False, dataset_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    from docs_core.evals.dataset_loader import load_eval_questions
 
-    base_dir = resolve_eval_data_dir()
-    questions = load_jsonl(base_dir / "questions.jsonl")
+    questions = load_eval_questions(dataset_id=dataset_id)
     if include_sql:
         return questions
     return [row for row in questions if str(row.get("task_type") or "") != "analytic_sql"]
 
 
+# 返回前端可展示的评测题库列表。
+def _load_knowledge_eval_datasets() -> List[Dict[str, Any]]:
+    from docs_core.evals.dataset_loader import list_eval_datasets
+
+    datasets = list_eval_datasets()
+    return [
+        {
+            "dataset_id": str(row.get("dataset_id") or ""),
+            "title": str(row.get("title") or ""),
+            "description": str(row.get("description") or ""),
+            "schema_version": str(row.get("schema_version") or ""),
+            "version": str(row.get("version") or ""),
+            "library_id": str(row.get("library_id") or ""),
+            "question_count": int(row.get("question_count") or 0),
+            "visible_question_count": int(row.get("visible_question_count") or 0),
+            "sql_question_count": int(row.get("sql_question_count") or 0),
+        }
+        for row in datasets
+        if row.get("dataset_id")
+    ]
+
+
 # 组装知识库评测运行结果，便于前端直接展示逐题状态与汇总分数。
-def _build_knowledge_eval_payload() -> Dict[str, Any]:
+def _build_knowledge_eval_payload(dataset_id: Optional[str] = None) -> Dict[str, Any]:
     from docs_core.evals.eval_reporter import build_eval_suite_report
 
-    all_questions = _load_knowledge_eval_questions(include_sql=True)
+    all_questions = _load_knowledge_eval_questions(include_sql=True, dataset_id=dataset_id)
     visible_questions = [row for row in all_questions if str(row.get("task_type") or "") != "analytic_sql"]
     question_map = {
         str(row.get("question_id") or ""): row
         for row in all_questions
         if row.get("question_id")
     }
-    report = build_eval_suite_report()
+    report = build_eval_suite_report(dataset_id=dataset_id)
+    available_datasets = _load_knowledge_eval_datasets()
+    selected_dataset = next(
+        (item for item in available_datasets if str(item.get("dataset_id") or "") == str(dataset_id or "")),
+        None,
+    )
 
     answer_report = dict(report.get("answer") or {})
     answer_details = []
@@ -179,6 +205,8 @@ def _build_knowledge_eval_payload() -> Dict[str, Any]:
             "question": question.get("question", ""),
             "difficulty": question.get("difficulty", ""),
             "tags": list(question.get("tags") or []),
+            "gold_answer": str((question.get("answer") or {}).get("gold_answer") or ""),
+            "thought_process": str(question.get("thought_process") or ""),
         })
     answer_report["details"] = answer_details
 
@@ -208,6 +236,8 @@ def _build_knowledge_eval_payload() -> Dict[str, Any]:
 
     return {
         "generated_at": datetime.now().isoformat(),
+        "available_datasets": available_datasets,
+        "selected_dataset": selected_dataset,
         "questions": [
             {
                 "question_id": str(row.get("question_id") or ""),
@@ -215,6 +245,10 @@ def _build_knowledge_eval_payload() -> Dict[str, Any]:
                 "task_type": str(row.get("task_type") or ""),
                 "difficulty": str(row.get("difficulty") or ""),
                 "tags": list(row.get("tags") or []),
+                "dataset_id": str(row.get("dataset_id") or ""),
+                "dataset_title": str(row.get("dataset_title") or ""),
+                "gold_answer": str((row.get("answer") or {}).get("gold_answer") or ""),
+                "thought_process": str(row.get("thought_process") or ""),
             }
             for row in visible_questions
             if row.get("question_id") and row.get("question")
@@ -226,6 +260,10 @@ def _build_knowledge_eval_payload() -> Dict[str, Any]:
             "text2sql": text2sql_report,
         },
     }
+
+
+class KnowledgeEvalRunRequest(BaseModel):
+    dataset_id: Optional[str] = None
 
 # AI Chat 对话相关模型
 class ChatMessage(BaseModel):
@@ -1421,20 +1459,38 @@ def build_structured_index(request: KnowledgeStructuredIndexRequest):
         raise HTTPException(status_code=500, detail=f"Build structured index failed: {str(error)}")
 
 
+@app.get("/api/knowledge/evals/datasets")
+def list_knowledge_eval_datasets():
+    """获取知识库评测题库列表。"""
+    try:
+        return {"datasets": _load_knowledge_eval_datasets()}
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Load eval datasets failed: {str(error)}")
+
+
 @app.get("/api/knowledge/evals/questions")
-def list_knowledge_eval_questions():
+def list_knowledge_eval_questions(dataset_id: Optional[str] = None):
     """获取知识库评测题目列表。"""
     try:
-        return {"questions": _load_knowledge_eval_questions(include_sql=False)}
+        available_datasets = _load_knowledge_eval_datasets()
+        return {
+            "datasets": available_datasets,
+            "selected_dataset": next(
+                (item for item in available_datasets if str(item.get("dataset_id") or "") == str(dataset_id or "")),
+                None,
+            ),
+            "questions": _load_knowledge_eval_questions(include_sql=False, dataset_id=dataset_id),
+        }
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"Load eval questions failed: {str(error)}")
 
 
 @app.post("/api/knowledge/evals/run")
-def run_knowledge_eval_suite():
+def run_knowledge_eval_suite(payload: Optional[KnowledgeEvalRunRequest] = None):
     """执行知识库评测并返回前端可展示的完整结果。"""
     try:
-        return _build_knowledge_eval_payload()
+        dataset_id = payload.dataset_id if payload else None
+        return _build_knowledge_eval_payload(dataset_id=dataset_id)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"Run eval suite failed: {str(error)}")
 

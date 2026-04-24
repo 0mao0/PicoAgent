@@ -1,30 +1,11 @@
 """知识回答评测模块。"""
 import json
-from pathlib import Path
 from typing import Any, Dict, List
 
+from docs_core.evals.dataset_loader import load_eval_answer_rows, load_eval_questions
 from docs_core.query.contracts import KnowledgeQueryRequest
 from docs_core.query.service import knowledge_query_service
-
-
-# 解析 docs-core 评测样本目录。
-def resolve_eval_data_dir() -> Path:
-    current_file = Path(__file__).resolve()
-    return current_file.parents[5] / "tests" / "evals" / "knowledge_rag"
-
-
-# 读取 jsonl 文件中的全部记录。
-def load_jsonl(file_path: Path) -> List[Dict[str, Any]]:
-    if not file_path.exists():
-        return []
-    records: List[Dict[str, Any]] = []
-    with open(file_path, "r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            records.append(json.loads(line))
-    return records
+from docs_core.evals.eval_retrieval import normalize_section_path
 
 
 # 调用当前知识查询服务，获取真实回答结果。
@@ -38,7 +19,6 @@ def run_predictions(questions: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]
         request = KnowledgeQueryRequest(
             query=query,
             library_id=str(question.get("library_id") or "default"),
-            doc_ids=list(question.get("doc_ids") or []),
             mode=str(question.get("expected_route") or "auto"),
             top_k=5,
             include_debug=True,
@@ -52,6 +32,7 @@ def run_predictions(questions: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]
             "answer": response.answer,
             "confidence": response.confidence,
             "citations": [item.model_dump(mode="json") for item in response.citations],
+            "retrieved_items": [item.model_dump(mode="json") for item in response.retrieved_items],
             "debug": response.debug,
         }
     return predictions
@@ -115,6 +96,25 @@ def is_refusal(answer: str) -> bool:
     return any(marker in normalized for marker in refusal_markers)
 
 
+# 判断引用中是否覆盖 gold 的章节路径要求。
+def citations_match_section_paths(citations: List[Dict[str, Any]], gold_section_paths: List[str]) -> bool:
+    normalized_gold_paths = [normalize_section_path(item) for item in gold_section_paths if normalize_section_path(item)]
+    if not normalized_gold_paths:
+        return True
+    normalized_citation_paths = [
+        normalize_section_path(str(item.get("section_path") or ""))
+        for item in citations
+        if normalize_section_path(str(item.get("section_path") or ""))
+    ]
+    for citation_path in normalized_citation_paths:
+        if any(
+            citation_path == gold_path or citation_path.endswith(gold_path) or gold_path in citation_path
+            for gold_path in normalized_gold_paths
+        ):
+            return True
+    return False
+
+
 # 评估回答质量的最小闭环。
 def evaluate_answers(
     questions: List[Dict[str, Any]],
@@ -139,10 +139,15 @@ def evaluate_answers(
         citations = list(prediction.get("citations") or [])
         predicted_target_ids = [str(item.get("target_id") or "") for item in citations]
         must_cite_target_ids = [str(item) for item in gold.get("must_cite_target_ids", []) if item]
+        must_cite_section_paths = [str(item) for item in gold.get("must_cite_section_paths", []) if item]
+        if not must_cite_section_paths:
+            must_cite_section_paths = [str(item) for item in gold.get("gold_section_paths", []) if item]
         refusal_expected = bool(gold.get("refusal_expected", False))
         actual_refusal = is_refusal(answer)
         has_answer = 1.0 if answer else 0.0
-        citation_ok = 1.0 if (not must_cite_target_ids or set(must_cite_target_ids) & set(predicted_target_ids)) else 0.0
+        citation_by_target = bool(must_cite_target_ids) and bool(set(must_cite_target_ids) & set(predicted_target_ids))
+        citation_by_section = citations_match_section_paths(citations, must_cite_section_paths)
+        citation_ok = 1.0 if ((not must_cite_target_ids and not must_cite_section_paths) or citation_by_target or citation_by_section) else 0.0
         refusal_ok = 1.0 if refusal_expected == actual_refusal else 0.0
         correctness = evaluate_answer_correctness(answer, gold)
         answer_non_empty += has_answer
@@ -167,6 +172,7 @@ def evaluate_answers(
                 "citations": citations,
                 "predicted_target_ids": predicted_target_ids,
                 "must_cite_target_ids": must_cite_target_ids,
+                "must_cite_section_paths": must_cite_section_paths,
                 "answer": answer,
                 "debug": prediction.get("debug", {}),
             }
@@ -194,9 +200,8 @@ def evaluate_answers(
 
 # 脚本入口：读取问题集与 gold answer，并调用当前知识查询主链。
 def main() -> None:
-    base_dir = resolve_eval_data_dir()
-    questions = load_jsonl(base_dir / "questions.jsonl")
-    gold_answer_rows = load_jsonl(base_dir / "gold_answers.jsonl")
+    questions = load_eval_questions()
+    gold_answer_rows = load_eval_answer_rows()
     gold_answers = {str(row.get("question_id") or ""): row for row in gold_answer_rows}
     predictions = run_predictions(questions)
     report = evaluate_answers(questions, gold_answers, predictions)

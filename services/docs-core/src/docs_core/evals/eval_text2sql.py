@@ -1,30 +1,10 @@
 """Text-to-SQL 评测模块。"""
 import json
-from pathlib import Path
 from typing import Any, Dict, List
 
+from docs_core.evals.dataset_loader import load_eval_questions, load_eval_sql_rows
 from docs_core.query.contracts import KnowledgeQueryRequest
 from docs_core.query.service import knowledge_query_service
-
-
-# 解析 docs-core 评测样本目录。
-def resolve_eval_data_dir() -> Path:
-    current_file = Path(__file__).resolve()
-    return current_file.parents[5] / "tests" / "evals" / "knowledge_rag"
-
-
-# 读取 jsonl 文件中的全部记录。
-def load_jsonl(file_path: Path) -> List[Dict[str, Any]]:
-    if not file_path.exists():
-        return []
-    records: List[Dict[str, Any]] = []
-    with open(file_path, "r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            records.append(json.loads(line))
-    return records
 
 
 # 调用当前知识查询服务，获取 SQL 结果。
@@ -109,9 +89,8 @@ def evaluate_text2sql(
 
 # 脚本入口：读取 SQL 样本并调用当前 Text-to-SQL 主链。
 def main() -> None:
-    base_dir = resolve_eval_data_dir()
-    questions = load_jsonl(base_dir / "questions.jsonl")
-    gold_sql_rows = load_jsonl(base_dir / "gold_sql.jsonl")
+    questions = load_eval_questions()
+    gold_sql_rows = load_eval_sql_rows()
     gold_sql = {str(row.get("question_id") or ""): row for row in gold_sql_rows if row.get("question_id")}
     sql_question_ids = set(gold_sql.keys())
     sql_questions = [question for question in questions if str(question.get("question_id") or "") in sql_question_ids]

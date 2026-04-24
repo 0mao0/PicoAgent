@@ -5,7 +5,7 @@ from docs_core.executors.contracts import ExecutorResult
 from docs_core.knowledge_service import KnowledgeNode
 from docs_core.query.contracts import KnowledgeQueryRequest, RetrievedItem
 from docs_core.retrieval.dense_retriever import dense_retriever
-from docs_core.retrieval.hybrid_retriever import fuse_candidates
+from docs_core.retrieval.hybrid_retriever import fuse_candidates, is_toc_candidate
 from docs_core.retrieval.reranker import has_sufficient_evidence, rerank_candidates
 from docs_core.retrieval.sparse_retriever import sparse_retriever
 
@@ -37,6 +37,21 @@ def summarize_candidates(candidates: List[RetrievedItem]) -> Dict[str, Any]:
     }
 
 
+# 按目录/正文拆分候选来源，便于在融合层做任务级差异处理。
+def split_toc_candidates(candidates: List[RetrievedItem]) -> tuple[List[RetrievedItem], List[RetrievedItem]]:
+    toc_candidates: List[RetrievedItem] = []
+    content_candidates: List[RetrievedItem] = []
+    for item in candidates:
+        next_item = item.model_copy(deep=True)
+        if is_toc_candidate(next_item):
+            next_item.metadata["is_toc"] = True
+            toc_candidates.append(next_item)
+        else:
+            next_item.metadata["is_toc"] = False
+            content_candidates.append(next_item)
+    return content_candidates, toc_candidates
+
+
 class ContentExecutor:
     """组织普通问答链的召回、融合与重排。"""
 
@@ -49,10 +64,14 @@ class ContentExecutor:
     ) -> tuple[List[RetrievedItem], Dict[str, Any], List[RetrievedItem], List[RetrievedItem]]:
         dense_candidates = dense_retriever.retrieve(request, doc_nodes, task_type)
         sparse_candidates = sparse_retriever.retrieve(request, doc_nodes, task_type)
+        dense_content_candidates, dense_toc_candidates = split_toc_candidates(dense_candidates)
+        sparse_content_candidates, sparse_toc_candidates = split_toc_candidates(sparse_candidates)
         ranked_candidates, fusion_debug = fuse_candidates(
             {
-                "canonical_dense": dense_candidates,
-                "canonical_sparse": sparse_candidates,
+                "canonical_dense": dense_content_candidates,
+                "canonical_sparse": sparse_content_candidates,
+                "toc_dense": dense_toc_candidates,
+                "toc_sparse": sparse_toc_candidates,
             },
             task_type=task_type,
             top_k=request.top_k,

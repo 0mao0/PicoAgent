@@ -85,15 +85,31 @@ export interface KnowledgeEvalQuestion {
   library_id?: string
   doc_ids?: string[]
   expected_route?: string
+  dataset_id?: string
+  dataset_title?: string
+  gold_answer?: string
+  thought_process?: string
+}
+
+export interface KnowledgeEvalDataset {
+  dataset_id: string
+  title: string
+  description?: string
+  schema_version?: string
+  version?: string
+  library_id?: string
+  question_count: number
+  visible_question_count: number
+  sql_question_count: number
 }
 
 export interface KnowledgeEvalSummary {
-  retrieval_score: number
-  answer_health_score: number
+  retrieval_score: number | null
+  answer_health_score: number | null
   answer_correctness_score: number | null
   checked_answer_total: number
   overall_score: number
-  text2sql_success_score: number
+  text2sql_success_score: number | null
 }
 
 export interface KnowledgeEvalAnswerDetail {
@@ -110,6 +126,8 @@ export interface KnowledgeEvalAnswerDetail {
   answer_correct?: number | null
   failed_correctness_checks?: Array<{ type?: string; keywords?: string[] }>
   answer?: string
+  gold_answer?: string
+  thought_process?: string
   citations?: Array<{
     target_id: string
     doc_id: string
@@ -123,6 +141,8 @@ export interface KnowledgeEvalAnswerDetail {
 
 export interface KnowledgeEvalRunResponse {
   generated_at: string
+  available_datasets?: KnowledgeEvalDataset[]
+  selected_dataset?: KnowledgeEvalDataset | null
   questions: KnowledgeEvalQuestion[]
   report: {
     summary: KnowledgeEvalSummary
@@ -138,6 +158,12 @@ export interface KnowledgeEvalRunResponse {
     retrieval: Record<string, any>
     text2sql: Record<string, any>
   }
+}
+
+export interface KnowledgeEvalQuestionsResponse {
+  datasets?: KnowledgeEvalDataset[]
+  selected_dataset?: KnowledgeEvalDataset | null
+  questions: KnowledgeEvalQuestion[]
 }
 
 api.interceptors.request.use(config => {
@@ -189,10 +215,14 @@ export const knowledgeApi = {
     api.get(`/knowledge/parse/tasks/${taskId}`) as Promise<ParseTaskInfo>,
   getLlmConfigs: () =>
     api.get('/llm_configs') as Promise<LlmConfigOption[]>,
-  getEvalQuestions: () =>
-    api.get('/knowledge/evals/questions') as Promise<{ questions: KnowledgeEvalQuestion[] }>,
-  runEvalSuite: () =>
-    api.post('/knowledge/evals/run', undefined, { timeout: 300000 }) as Promise<KnowledgeEvalRunResponse>,
+  getEvalDatasets: () =>
+    api.get('/knowledge/evals/datasets') as Promise<{ datasets: KnowledgeEvalDataset[] }>,
+  getEvalQuestions: (datasetId?: string) =>
+    api.get('/knowledge/evals/questions', {
+      params: datasetId ? { dataset_id: datasetId } : undefined
+    }) as Promise<KnowledgeEvalQuestionsResponse>,
+  runEvalSuite: (datasetId?: string) =>
+    api.post('/knowledge/evals/run', datasetId ? { dataset_id: datasetId } : {}, { timeout: 300000 }) as Promise<KnowledgeEvalRunResponse>,
 
   // 策略
   getDocStrategy: (docId: string) => api.get(`/knowledge/strategies/${docId}`),

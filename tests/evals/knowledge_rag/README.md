@@ -4,14 +4,11 @@
 
 ## 文件说明
 
-- `questions.jsonl`
-  - 问题主表。
-- `gold_retrieval.jsonl`
-  - 标准检索命中项；对于拒答样本可留空，表示期望不返回证据。
-- `gold_answers.jsonl`
-  - 标准答案与必须引用项。
-- `gold_sql.jsonl`
-  - Text-to-SQL 样本与标准 SQL。
+- `eval_1.json`
+  - 单文件题库包；每道题聚合 `question`、`retrieval`、`answer`、`sql` 等字段。
+  - 顶层 `dataset` 保存题库元信息，如 `dataset_id`、`title`、`schema_version`、`version`。
+  - 顶层 `items` 为题目数组，每个 item 的最小字段为 `question_id`、`question`、`library_id`。
+  - 后续可在单题下继续扩展 `reasoning`、`thought_process`、`grading_rules`、`source_notes`、`exam_year` 等字段。
 - `eval_retrieval.py`
   - 调用当前知识检索主链并计算 Recall@3、Recall@5、MRR，并额外统计拒答样本的空检索正确率。
 - `eval_answer.py`
@@ -21,14 +18,14 @@
 
 ## 使用原则
 
-- 每行一条 JSON 记录。
-- `question_id` 必须在四个文件中保持一致。
-- 没有对应 SQL 的问题，不需要写入 `gold_sql.jsonl`。
+- `eval_1.json` 是当前唯一真相源。
+- 每道题一条 `item`，`question_id` 在同一题库内必须唯一。
+- 没有对应 SQL 的问题，可以省略 `sql` 字段。
 - 优先使用真实文档问题，覆盖命中、表格、定位和拒答等不同场景。
-- 多文档样本可在 `doc_ids` 中同时填写多个文档，用于验证跨文档干扰。
-- 对于拒答样本，`gold_retrieval.jsonl` 的 `gold_chunk_ids` 应为空数组。
-- 对于拒答样本，`gold_answers.jsonl` 需要设置 `refusal_expected: true`。
-- 对于重叠条文场景，`gold_chunk_ids` 和 `must_cite_target_ids` 可同时写入多个可接受命中项。
+- 多题库可直接并存于本目录，例如 `eval_1.json`、`exam_2024.json`、`exam_2025.json`；系统会自动合并读取。
+- 对于拒答样本，建议在 `answer.refusal_expected` 中显式标注。
+- 对于检索评测，优先使用 `retrieval.gold_section_paths` 作为稳定命中范围，避免绑定易变的内部 `chunk_id`。
+- 对于重叠条文场景，可在同一题下给出多个可接受章节路径、评分规则或答案检查条件。
 
 ## 运行方式
 

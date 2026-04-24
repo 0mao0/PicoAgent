@@ -109,14 +109,42 @@ def normalize_block_type(raw_block_type: object) -> str:
     return mapping.get(block_type, "unknown")
 
 
-# 把 doc_blocks_graph 节点适配为 canonical builder 可消费的统一块结构。
-def adapt_graph_node(raw_node: dict[str, Any], index: int) -> dict[str, Any]:
-    title_path = raw_node.get("title_path")
-    section_path = ""
-    if isinstance(title_path, list):
-        section_path = " / ".join(str(item).strip() for item in title_path if str(item).strip())
+# 归一化图谱中的章节标题，尽量去掉目录页里尾部页码噪声。
+def normalize_graph_section_title(text: str) -> str:
+    normalized = clean_text(text)
+    return re.sub(r"\s*\(\d+\)\s*$", "", normalized)
 
+
+# 基于图谱父子关系推导当前节点的可读 section_path。
+def resolve_graph_section_path(
+    block_uid: str,
+    node_map: dict[str, dict[str, Any]],
+    cache: dict[str, str],
+) -> str:
+    if not block_uid:
+        return ""
+    cached_value = cache.get(block_uid)
+    if cached_value is not None:
+        return cached_value
+    node = node_map.get(block_uid) or {}
+    parent_uid = str(node.get("parent_uid") or "").strip()
+    parent_path = resolve_graph_section_path(parent_uid, node_map, cache) if parent_uid else ""
+    node_text = normalize_graph_section_title(str(node.get("plain_text") or node.get("text") or "").strip())
+    node_block_type = normalize_block_type(node.get("block_type"))
+    current_title = ""
+    if node_text and (node.get("derived_level") is not None or node_block_type == "title"):
+        current_title = node_text
+    if current_title and parent_path:
+        cache[block_uid] = f"{parent_path} / {current_title}"
+    else:
+        cache[block_uid] = current_title or parent_path
+    return cache[block_uid]
+
+
+# 把单个 doc_blocks_graph 节点适配为 canonical builder 可消费的统一块结构。
+def adapt_graph_node(raw_node: dict[str, Any], index: int, section_path: str) -> dict[str, Any]:
     block_type = normalize_block_type(raw_node.get("block_type"))
+    content_json = raw_node.get("content_json") if isinstance(raw_node.get("content_json"), dict) else {}
 
     return {
         "id": raw_node.get("id") or f"graph-block-{index}",
@@ -132,24 +160,41 @@ def adapt_graph_node(raw_node: dict[str, Any], index: int) -> dict[str, Any]:
         "parent_block_uid": raw_node.get("parent_uid"),
         "source_ref": raw_node.get("id"),
         "table_html": raw_node.get("table_html"),
-        "caption": raw_node.get("plain_text") if block_type == "table" else "",
+        "content_json": content_json,
+        "caption": raw_node.get("caption") or (raw_node.get("plain_text") if block_type == "table" else ""),
+        "footnote": raw_node.get("footnote") or "",
     }
 
 
-# 统一加载 canonical 构建所需的原始块，优先 MinerU blocks，缺失时回退 graph nodes。
+# 把整份图谱节点转换为 canonical builder 可消费的最终审核块结构。
+def adapt_graph_nodes(graph_nodes: List[dict[str, Any]]) -> List[dict[str, Any]]:
+    node_map = {
+        str(node.get("block_uid") or node.get("id") or "").strip(): node
+        for node in graph_nodes
+        if isinstance(node, dict) and str(node.get("block_uid") or node.get("id") or "").strip()
+    }
+    section_path_cache: dict[str, str] = {}
+    adapted_nodes: List[dict[str, Any]] = []
+    for index, raw_node in enumerate(graph_nodes):
+        if not isinstance(raw_node, dict):
+            continue
+        block_uid = str(raw_node.get("block_uid") or raw_node.get("id") or "").strip()
+        section_path = resolve_graph_section_path(block_uid, node_map, section_path_cache)
+        adapted_nodes.append(adapt_graph_node(raw_node, index, section_path))
+    return adapted_nodes
+
+
+# 统一加载 canonical 构建所需的最终审核块，优先 graph nodes，其次 mineru_blocks。
 def load_source_blocks(library_id: str, doc_id: str) -> List[dict[str, Any]]:
+    graph_payload = file_storage.read_doc_blocks_graph(library_id, doc_id)
+    graph_nodes = graph_payload.get("nodes", []) if isinstance(graph_payload, dict) else []
+    if graph_nodes:
+        return adapt_graph_nodes(graph_nodes)
+
     raw_blocks = file_storage.read_mineru_blocks(library_id, doc_id)
     if raw_blocks:
         return raw_blocks
-
-    graph_payload = file_storage.read_doc_blocks_graph(library_id, doc_id)
-    graph_nodes = graph_payload.get("nodes", []) if isinstance(graph_payload, dict) else []
-    adapted_nodes = [
-        adapt_graph_node(raw_node, index)
-        for index, raw_node in enumerate(graph_nodes)
-        if isinstance(raw_node, dict)
-    ]
-    return adapted_nodes
+    return []
 
 
 # 从 MinerU blocks 构建 canonical blocks。
@@ -440,6 +485,10 @@ def build_canonical_document(library_id: str, doc_id: str, title: str = "") -> C
     chunks = build_canonical_chunks(blocks)
     tables, table_chunks = build_canonical_tables(library_id, doc_id, blocks)
     inferred_title = title or next((block.text for block in blocks if block.block_type == "title" and block.text), doc_id)
+    manifest = file_storage.get_doc_manifest(library_id, doc_id)
+    source_file_name = ""
+    if manifest.get("source_file"):
+        source_file_name = str(manifest.get("source_file") or "").split("\\")[-1].split("/")[-1]
     page_count = 0
     if blocks:
         page_count = max(block.page_idx for block in blocks) + 1
@@ -449,7 +498,7 @@ def build_canonical_document(library_id: str, doc_id: str, title: str = "") -> C
         doc_id=doc_id,
         library_id=library_id,
         title=inferred_title,
-        source_file_name=doc_id,
+        source_file_name=source_file_name or doc_id,
         source_file_type="pdf",
         page_count=page_count,
         status="completed" if markdown or blocks else "pending",
@@ -459,5 +508,19 @@ def build_canonical_document(library_id: str, doc_id: str, title: str = "") -> C
         outlines=outlines,
         chunks=chunks + table_chunks,
         tables=tables,
+    )
+    return document
+
+
+# 基于最终审核结果重建 canonical 文档并持久化到 SQLite。
+def rebuild_canonical_document(library_id: str, doc_id: str, title: str = "") -> CanonicalDocument:
+    from docs_core.knowledge_service import knowledge_service
+
+    document = build_canonical_document(library_id, doc_id, title=title)
+    knowledge_service.save_canonical_document(document)
+    file_storage.save_middle_json(
+        library_id,
+        doc_id,
+        document.model_dump(mode="json"),
     )
     return document

@@ -837,6 +837,9 @@ def build_structured_index_for_doc(
         llm_model=llm_model,
         use_llm=use_llm,
     )
+    from docs_core.ingest.canonical.builder import rebuild_canonical_document
+
+    canonical_document = rebuild_canonical_document(library_id, doc_id, title=doc_name)
 
     stats = {
         "nodes_count": len(result.nodes),
@@ -849,6 +852,9 @@ def build_structured_index_for_doc(
         "llm_model": llm_model,
         "derive_version": derive_version,
         "graph_path": graph_path,
+        "canonical_blocks_count": len(canonical_document.blocks),
+        "canonical_chunks_count": len(canonical_document.chunks),
+        "canonical_tables_count": len(canonical_document.tables),
     }
 
     return {
@@ -874,6 +880,18 @@ def _write_doc_blocks_graph(library_id: str, doc_id: str, payload: Dict[str, Any
     with open(graph_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return str(graph_path)
+
+
+# 基于最新审核图谱重建 canonical，确保检索读模型与编辑结果一致。
+def _rebuild_canonical_after_graph_change(library_id: str, doc_id: str) -> Dict[str, int]:
+    from docs_core.ingest.canonical.builder import rebuild_canonical_document
+
+    canonical_document = rebuild_canonical_document(library_id, doc_id)
+    return {
+        "canonical_blocks": len(canonical_document.blocks),
+        "canonical_chunks": len(canonical_document.chunks),
+        "canonical_tables": len(canonical_document.tables),
+    }
 
 
 # 判断节点引用是否命中指定 block_uid。
@@ -1998,9 +2016,11 @@ def batch_operate_doc_blocks(
         correction_payload["undo_graph_snapshot"] = graph_snapshot_before
     knowledge_service.index_store.record_doc_block_correction(doc_id, record_block_uid, operation, correction_payload)
     saved_segments = _sync_structured_segments_after_node_update(library_id, doc_id, graph_data)
+    canonical_stats = _rebuild_canonical_after_graph_change(library_id, doc_id)
     knowledge_service.update_node(doc_id, updated_at=datetime.now())
     result_payload["graph_path"] = graph_path
     result_payload["saved_segments"] = saved_segments
+    result_payload["canonical_stats"] = canonical_stats
     return result_payload
 
 
@@ -2024,11 +2044,13 @@ def undo_last_doc_block_operation(library_id: str, doc_id: str) -> Dict[str, Any
     graph_path = _write_doc_blocks_graph(library_id, doc_id, graph_data)
     _persist_graph_projection_to_index_store(doc_id, graph_data)
     saved_segments = _sync_structured_segments_after_node_update(library_id, doc_id, graph_data)
+    canonical_stats = _rebuild_canonical_after_graph_change(library_id, doc_id)
     knowledge_service.index_store.delete_doc_block_correction(str(correction_record.get("id") or ""))
     knowledge_service.update_node(doc_id, updated_at=datetime.now())
     return {
         "graph_path": graph_path,
         "saved_segments": saved_segments,
+        "canonical_stats": canonical_stats,
         "restored_block_ids": [
             _normalize_block_uid(node.get("block_uid") or node.get("id"))
             for node in _sort_graph_nodes(_get_active_graph_nodes(graph_data))
@@ -2126,6 +2148,7 @@ def update_doc_block_content(
         correction_payload["undo_graph_snapshot"] = graph_snapshot_before
     knowledge_service.index_store.record_doc_block_correction(doc_id, target_block_uid, operation_type, correction_payload)
     saved_segments = _sync_structured_segments_after_node_update(library_id, doc_id, graph_data)
+    canonical_stats = _rebuild_canonical_after_graph_change(library_id, doc_id)
     knowledge_service.update_node(doc_id, updated_at=datetime.now())
 
     return {
@@ -2133,6 +2156,7 @@ def update_doc_block_content(
         "block_id": target_block_uid,
         "updated_fields": list(normalized_changes.keys()),
         "saved_segments": saved_segments,
+        "canonical_stats": canonical_stats,
         "node": target_node,
     }
 
