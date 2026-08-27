@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- feat: 新增 dark 主题 token 段（`[data-theme="dark"]`）——色调类给 antd 暗色系对应值，其余链宿主语义变量（`--bg-secondary` 等）自动跟随；导入 `./style` 即获得完整 dark 切换，不导入仍为 light 默认（无回归）
+- docs: README 主题表补 dark 列
+
 ## 0.1.5
 
 - fix: 修复主题 token 文件自引用失效（`--chat-x: var(--chat-x, …)` 为 CSS 循环引用，按规范整体无效）；组件使用处全部补齐 fallback，不导入 `./style` 也能正常渲染，`./style` 降级为可选的集中覆盖层
