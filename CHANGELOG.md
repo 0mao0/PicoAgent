@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- fix: 修复主题 token 文件自引用失效（`--chat-x: var(--chat-x, …)` 为 CSS 循环引用，按规范整体无效）；组件使用处全部补齐 fallback，不导入 `./style` 也能正常渲染，`./style` 降级为可选的集中覆盖层
+- fix: `--bg-secondary` 使用处补 fallback
+- chore: 新增 `typecheck`（vue-tsc）与 `test` 脚本；README 收编主仓库（安装/导出/主题契约/token 表）
+
 ## 0.1.4
 
 - feat: 同步 monorepo 0.2.16 改动——流式引用 tag 实时渲染（正文 [Kx]/[Tx] 标记在流式期间即可显示引用框）与引用 id 归一化（剥掉 target:/table:/formula:/figure:/chunk: 前缀）
