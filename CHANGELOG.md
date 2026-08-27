@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- feat: 同步 monorepo 0.2.16 改动——流式引用 tag 实时渲染（正文 [Kx]/[Tx] 标记在流式期间即可显示引用框）与引用 id 归一化（剥掉 target:/table:/formula:/figure:/chunk: 前缀）
+
 ## 0.1.3
 
 - feat: AI 对话知识库切换响应式（切库后聊天作用域实时生效，修复挂载时快照问题）
