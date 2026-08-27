@@ -1,4 +1,32 @@
-# docs-ui 优化架构说明（A/B/C/D/U 分层）
+# angineer-docs-ui
+
+Vue 3 知识库文档工作台组件库：PDF 查看、解析工作区、知识树等组件与 composables。
+
+## 安装
+
+```bash
+pnpm add github:0mao0/angineer-docs-ui
+```
+
+宿主项目需提供 peer 依赖：`vue@3.5`、`ant-design-vue@4`、`@ant-design/icons-vue@7`。
+依赖 `@angineer/smartree`，需一并从 git 安装（`github:0mao0/angineer-smartree-ui`）。
+
+## 使用
+
+```ts
+import { PDF_Viewer, PDFParsedWorkspace, KnowledgeTree } from '@angineer/docs-ui'
+import '@angineer/docs-ui/style'
+```
+
+## 导出
+
+- 组件：`SmartTree`、`KnowledgeTree`、`PDFParsedWorkspace`、`PDFParsedViewerCombo`、`PDF_Viewer`、`Preview_Markdown`
+- Composable：`useKnowledgeTree`、`useDocBlocksGraph`、`useKnowledgeCitation`、`useKnowledgeParse` 等
+- 子路径：`@angineer/docs-ui/style`
+
+---
+
+## 内部架构说明（A/B/C/D/U 分层）
 
 本文档用于 `packages/docs-ui` 的后续改造与日常阅读，目标是统一分层认知、调用边界和文件职责。
 
