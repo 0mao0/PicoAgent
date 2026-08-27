@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.1
+
+- feat: npm registry 正式上架（@angineer/table-ui）
+
 ## v0.1.0
 
 - 首次发布：通用表格组件 DataTable（自 AnGIneer ui-kit 拆分独立）
