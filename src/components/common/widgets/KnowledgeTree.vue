@@ -1,6 +1,6 @@
 <template>
   <SmartTree
-    ref="smartTreeRef"
+    :ref="setSmartTreeRef"
     :tree-data="treeData"
     :show-search="showSearch"
     :search-placeholder="searchPlaceholder"
@@ -24,6 +24,7 @@
     @add-folder="(node) => emit('add-folder', node as KnowledgeTreeNode | null)"
     @add-file="(node) => emit('add-file', node as KnowledgeTreeNode)"
     @delete="(node) => emit('delete', node as KnowledgeTreeNode)"
+    @batch-delete="(node) => emit('batch-delete', node as KnowledgeTreeNode)"
     @view="(node) => emit('view', node as KnowledgeTreeNode)"
     @drop="(info) => emit('drop', info)"
     @search="(text) => emit('search', text)"
@@ -97,7 +98,8 @@ export interface KnowledgeTreeProps {
  * 在 docs-ui 中承接知识节点类型与基础树组件之间的边界，便于后续扩展知识域默认行为。
  */
 import { ref } from 'vue'
-import SmartTree from './SmartTree.vue'
+import { SmartTree } from '@angineer/smartree'
+import type { SmartTreeExposed } from '@angineer/smartree'
 import type { DropEvent } from '../../../types/tree'
 import {
   FolderOutlined,
@@ -116,6 +118,7 @@ const emit = defineEmits<{
   'add-folder': [node: KnowledgeTreeNode | null]
   'add-file': [node: KnowledgeTreeNode]
   delete: [node: KnowledgeTreeNode]
+  'batch-delete': [node: KnowledgeTreeNode]
   view: [node: KnowledgeTreeNode]
   drop: [event: DropEvent]
   search: [text: string]
@@ -124,7 +127,10 @@ const emit = defineEmits<{
   'drop-root': [dragNodeKeys: string[]]
 }>()
 
-const smartTreeRef = ref<InstanceType<typeof SmartTree> | null>(null)
+const smartTreeRef = ref<SmartTreeExposed | null>(null)
+const setSmartTreeRef = (instance: unknown) => {
+  smartTreeRef.value = (instance ?? null) as SmartTreeExposed | null
+}
 
 /**
  * 展开所有知识节点。
