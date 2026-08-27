@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- feat: npm registry 正式上架（@angineer/docs-ui），smartree 依赖以 ^0.1.1 从 registry 解析（不再依赖 git 安装）
+
 ## 0.2.0
 
 - refactor: 移除内置 SmartTree 组件，改为依赖 @angineer/smartree（^0.1.1），与 monorepo 结构统一，SmartTree 维护单一代码来源
