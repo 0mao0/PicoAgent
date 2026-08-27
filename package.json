@@ -1,6 +1,6 @@
 {
   "name": "@angineer/docs-ui",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -26,6 +26,7 @@
     "vue": "3.5.41"
   },
   "dependencies": {
+    "@angineer/smartree": "^0.1.1",
     "docx-preview": "^0.4.0",
     "katex": "0.18.4",
     "pdfjs-dist": "6.2.108",

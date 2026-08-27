@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- refactor: 移除内置 SmartTree 组件，改为依赖 @angineer/smartree（^0.1.1），与 monorepo 结构统一，SmartTree 维护单一代码来源
+- 对消费方：安装 @angineer/docs-ui 时会自动安装 @angineer/smartree，对外组件 API 不变
+
 ## 0.1.5
 
 - fix: PDF 搜索命中按文本+行距解析目标高亮块，修复编辑版/解析版 markdown 行号错位导致的错页定位
