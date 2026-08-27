@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- feat: npm registry 正式上架（@angineer/aichat-ui）
+
 ## 0.1.6
 
 - feat: 新增 dark 主题 token 段（`[data-theme="dark"]`）——色调类给 antd 暗色系对应值，其余链宿主语义变量（`--bg-secondary` 等）自动跟随；导入 `./style` 即获得完整 dark 切换，不导入仍为 light 默认（无回归）
