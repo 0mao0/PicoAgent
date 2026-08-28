@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.2
+
+- ci: 发布流水线合并——npm 发布成功后统一推送企微通知（内容含 GitHub + npm 双渠道），通知不再早于发布
+
 ## v0.1.1
 
 - feat: npm registry 正式上架（@angineer/table-ui）
