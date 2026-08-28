@@ -63,6 +63,7 @@ package = os.environ.get("PACKAGE", "angineer")
 tag = os.environ.get("TAG", "")
 sha = os.environ.get("SHA", "")[:7]
 run_url = os.environ.get("RUN_URL", "")
+channels = os.environ.get("CHANNELS", "").strip()
 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 intro = os.environ.get("INTRO", "").strip()[:8]
 desc = os.environ.get("DESC", "").strip()
@@ -86,6 +87,8 @@ if intro:
     lines.append(f"> **介绍:** {intro}")
 if tag:
     lines.append(f"> **版本:** `{tag}`")
+if channels:
+    lines.append(f"> **渠道:** `{channels}`")
 if desc:
     lines.append(f"> **本次发版:** {desc}")
 if total:

@@ -1,8 +1,13 @@
-name: Publish to npm
+name: Publish
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      desc:
+        description: "发布说明（不填自动读 CHANGELOG）"
+        required: false
+        default: ""
 
 jobs:
   publish:
@@ -12,6 +17,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -22,3 +29,15 @@ jobs:
       - run: pnpm install
       - run: pnpm typecheck
       - run: npm publish --provenance
+      - name: Notify WeCom group
+        if: success()
+        env:
+          WEBHOOK: ${{ secrets.WECOM_WEBHOOK_URL }}
+          PACKAGE: ${{ github.repository }}
+          INTRO: 通用表格组件
+          TAG: ${{ github.ref_name }}
+          DESC: ${{ inputs.desc || '' }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHANNELS: GitHub + npm registry
+        run: python3 .github/scripts/release_notify.py
