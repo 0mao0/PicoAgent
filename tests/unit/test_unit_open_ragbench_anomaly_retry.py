@@ -106,12 +106,12 @@ class NotifyTests(unittest.TestCase):
         from open_ragbench import notify
         text = notify.build_message(self.RAW, self.GATE, "green")
         by_prefix = {ln.split("：")[0]: ln for ln in text.splitlines() if "：" in ln}
-        self.assertIn("时间", by_prefix)   # 北京时间换算：18:00 UTC = 02:00 CST
-        self.assertIn("02:00", by_prefix["时间"])
+        self.assertIn("02:00", by_prefix["时间"])   # 北京时间换算，不带时区标注
+        self.assertNotIn("北京", text)
+        self.assertNotIn("样例", text)
         self.assertEqual(by_prefix["时长"].split("：")[1], "3h30m")
         self.assertIn("87.68%", by_prefix["结果"])
-        self.assertIn("+2.67pp", by_prefix["分析"])
-        self.assertIn("净提升 +13 题", by_prefix["分析"])
+        self.assertIn("分析：较基线提升 2.7 个百分点（净增 13 题），无显著回归。", text)
 
     def test_error_state_has_no_result_fabrication(self):
         from open_ragbench import notify

@@ -40,11 +40,11 @@ def _fmt_span(started_at, completed_at) -> Tuple[str, str]:
 
 
 def build_message(raw: Optional[dict], gate: Optional[dict], state: str, error_note: str = "") -> str:
-    """一行一项：时间 / 时长 / 结果 / 分析 /（回退样例）/ 查看。"""
+    """一行一项：时间 / 时长 / 结果 / 分析 / 查看。分析与时长是简单文字，详情进日志。"""
     summary = (raw or {}).get("summary_scores") or {}
     span, duration = _fmt_span((raw or {}).get("started_at"), (raw or {}).get("completed_at"))
     lines = [_HEADS.get(state, _HEADS[STATE_ERROR])]
-    lines.append(f"时间：{span}（北京时间）")
+    lines.append(f"时间：{span}")
     lines.append(f"时长：{duration}")
     if summary:
         lines.append(
@@ -57,26 +57,19 @@ def build_message(raw: Optional[dict], gate: Optional[dict], state: str, error_n
         lines.append("结果：—（未产出评测结果）")
     if gate:
         m = gate.get("matrix") or {}
-        delta, ci = gate.get("delta"), gate.get("delta_ci95")
-        delta_s = f"Δ{delta * 100:+.2f}pp" if isinstance(delta, (int, float)) else "Δ—"
-        ci_s = f"（CI [{ci[0] * 100:+.2f},{ci[1] * 100:+.2f}]pp）" if ci else ""
-        net = (m.get("pf", 0) - m.get("fp", 0)) if "pf" in m and "fp" in m else None
-        trend = ("净提升" if (net or 0) > 0 else ("净回退" if (net or 0) < 0 else "持平")) if net is not None else ""
-        verdict = "显著回退" if state == STATE_RED else "无显著回退"
-        lines.append(
-            f"分析：vs「{gate.get('base_label', '?')}」{delta_s}{ci_s}"
-            f"｜修复{m.get('pf', '?')}·回退{m.get('fp', '?')}·双过{m.get('pp', '?')}"
-            + (f" → {trend} {net:+d} 题，{verdict}" if net is not None else "")
-        )
-        for reason in (gate.get("gate_reasons") or [])[:2]:
-            lines.append(f"⚠ {reason}")
-        regressions = list((gate.get("regressions") or {}).items())[:5]
-        if regressions:
-            lines.append("样例：" + "；".join(f"`{q[:8]}` {b}" for q, b in regressions))
-    elif state != STATE_ERROR:
-        lines.append("分析：—（门禁产物缺失）")
+        delta = gate.get("delta")
+        if isinstance(delta, (int, float)):
+            pp = abs(delta) * 100
+            move = "提升" if delta > 0.002 else ("下降" if delta < -0.002 else "基本持平")
+            net = m.get("pf", 0) - m.get("fp", 0)
+            tail = "，存在显著回归" if state == STATE_RED else ("，无显著回归" if delta > -0.002 else "，需关注")
+            lines.append(f"分析：较基线{move} {pp:.1f} 个百分点（净{'增' if net >= 0 else '退'} {abs(net)} 题）{tail}。")
+        else:
+            lines.append("分析：门禁产物不完整，见日志。")
+    elif state == STATE_ERROR:
+        lines.append(f"分析：评测环节未完成（{error_note or '见日志'}），无结论。")
     else:
-        lines.append(f"分析：{error_note or '见工作流日志'}")
+        lines.append("分析：门禁产物缺失，见日志。")
     return "\n".join(lines)
 
 
