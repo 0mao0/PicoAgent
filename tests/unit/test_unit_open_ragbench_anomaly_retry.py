@@ -95,19 +95,30 @@ class PollTimeoutTests(unittest.TestCase):
 class NotifyTests(unittest.TestCase):
     """通知三态：缺门禁产物绝不显示'通过'（nightly 首跑绿卡片误报回归钉）。"""
 
-    RAW = {"run_id": "run-x", "summary_scores": {
-        "overall_score": 0.8768, "correct": 427, "total": 487,
-        "errored": 0, "judge_failed_count": 0, "retrieval_score": 0.92, "answer_score": 0.907}}
+    RAW = {"run_id": "run-x", "started_at": "2026-09-05T18:00:00", "completed_at": "2026-09-05T21:30:00",
+           "summary_scores": {
+               "overall_score": 0.8768, "correct": 427, "total": 487,
+               "errored": 0, "judge_failed_count": 0, "retrieval_score": 0.92, "answer_score": 0.907}}
     GATE = {"base_label": "R2 基线", "delta": 0.0267, "delta_ci95": [0.011, 0.042],
             "matrix": {"pp": 380, "pf": 34, "fp": 21, "ff": 52}, "regressions": {}, "gate_reasons": []}
 
-    def test_green_contains_real_numbers(self):
+    def test_green_line_per_item(self):
         from open_ragbench import notify
         text = notify.build_message(self.RAW, self.GATE, "green")
-        self.assertIn("通过", text)
-        self.assertIn("87.68%", text)
-        self.assertIn("+2.67pp", text)
-        self.assertIn("双过380", text)
+        by_prefix = {ln.split("：")[0]: ln for ln in text.splitlines() if "：" in ln}
+        self.assertIn("时间", by_prefix)   # 北京时间换算：18:00 UTC = 02:00 CST
+        self.assertIn("02:00", by_prefix["时间"])
+        self.assertEqual(by_prefix["时长"].split("：")[1], "3h30m")
+        self.assertIn("87.68%", by_prefix["结果"])
+        self.assertIn("+2.67pp", by_prefix["分析"])
+        self.assertIn("净提升 +13 题", by_prefix["分析"])
+
+    def test_error_state_has_no_result_fabrication(self):
+        from open_ragbench import notify
+        text = notify.build_message(None, None, "error", "eval=failure")
+        self.assertIn("执行失败", text)
+        self.assertIn("结果：—", text)
+        self.assertIn("eval=failure", text)
 
     def test_missing_gate_cannot_be_green(self):
         from open_ragbench import notify

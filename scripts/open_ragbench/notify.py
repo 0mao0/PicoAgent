@@ -11,8 +11,9 @@ import json
 import os
 import sys
 import urllib.request
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 STATE_GREEN, STATE_RED, STATE_ERROR = "green", "red", "error"
 _HEADS = {STATE_GREEN: "**🟢 AnGIneer nightly 评测通过**",
@@ -25,32 +26,57 @@ def _pct(value):
     return f"{value * 100:.2f}%" if isinstance(value, (int, float)) else "—"
 
 
+def _fmt_span(started_at, completed_at) -> Tuple[str, str]:
+    """run 起止（容器 UTC → 北京时间）与时长。字段缺失一律 '—'，通知不许造时间。"""
+    try:
+        start = datetime.fromisoformat(str(started_at)) + timedelta(hours=8)
+        end = datetime.fromisoformat(str(completed_at)) + timedelta(hours=8)
+        minutes = max(0, int((end - start).total_seconds() // 60))
+        span = f"{start:%m-%d %H:%M} – {end:%H:%M}"
+        duration = f"{minutes // 60}h{minutes % 60:02d}m"
+        return span, duration
+    except (TypeError, ValueError):
+        return "—", "—"
+
+
 def build_message(raw: Optional[dict], gate: Optional[dict], state: str, error_note: str = "") -> str:
-    lines = [_HEADS.get(state, _HEADS[STATE_ERROR])]
+    """一行一项：时间 / 时长 / 结果 / 分析 /（回退样例）/ 查看。"""
     summary = (raw or {}).get("summary_scores") or {}
+    span, duration = _fmt_span((raw or {}).get("started_at"), (raw or {}).get("completed_at"))
+    lines = [_HEADS.get(state, _HEADS[STATE_ERROR])]
+    lines.append(f"时间：{span}（北京时间）")
+    lines.append(f"时长：{duration}")
     if summary:
         lines.append(
-            f"> run `{(raw or {}).get('run_id', '?')}`：**{_pct(summary.get('overall_score'))}**"
-            f"（正确 {summary.get('correct', '?')}/{summary.get('total', '?')}），"
-            f"错误 {summary.get('errored', 0)}，judge 异常 {summary.get('judge_failed_count', '?')}"
-            f"｜检索 {_pct(summary.get('retrieval_score'))}｜答案 {_pct(summary.get('answer_score'))}"
+            f"结果：**{_pct(summary.get('overall_score'))}**"
+            f"（正确 {summary.get('correct', '?')}/{summary.get('total', '?')}）"
+            f"｜judge 异常 {summary.get('judge_failed_count', '?')}"
+            f"｜执行错误 {summary.get('errored', 0)}"
         )
+    else:
+        lines.append("结果：—（未产出评测结果）")
     if gate:
         m = gate.get("matrix") or {}
         delta, ci = gate.get("delta"), gate.get("delta_ci95")
+        delta_s = f"Δ{delta * 100:+.2f}pp" if isinstance(delta, (int, float)) else "Δ—"
+        ci_s = f"（CI [{ci[0] * 100:+.2f},{ci[1] * 100:+.2f}]pp）" if ci else ""
+        net = (m.get("pf", 0) - m.get("fp", 0)) if "pf" in m and "fp" in m else None
+        trend = ("净提升" if (net or 0) > 0 else ("净回退" if (net or 0) < 0 else "持平")) if net is not None else ""
+        verdict = "显著回退" if state == STATE_RED else "无显著回退"
         lines.append(
-            f"> vs 基线「{gate.get('base_label', '?')}」：Δ"
-            f"{(f'{delta * 100:+.2f}pp' if isinstance(delta, (int, float)) else '—')}"
-            + (f"（95%CI [{ci[0] * 100:+.2f}, {ci[1] * 100:+.2f}]pp）" if ci else "")
-            + f"｜矩阵 双过{m.get('pp', '?')}·修复{m.get('pf', '?')}·回退{m.get('fp', '?')}·双挂{m.get('ff', '?')}"
+            f"分析：vs「{gate.get('base_label', '?')}」{delta_s}{ci_s}"
+            f"｜修复{m.get('pf', '?')}·回退{m.get('fp', '?')}·双过{m.get('pp', '?')}"
+            + (f" → {trend} {net:+d} 题，{verdict}" if net is not None else "")
         )
+        for reason in (gate.get("gate_reasons") or [])[:2]:
+            lines.append(f"⚠ {reason}")
         regressions = list((gate.get("regressions") or {}).items())[:5]
         if regressions:
-            lines.append("> 回退样例：" + "；".join(f"`{q[:8]}` {b}" for q, b in regressions))
-        for reason in (gate.get("gate_reasons") or [])[:3]:
-            lines.append(f"> 🔺 {reason}")
-    if state == STATE_ERROR:
-        lines.append(f"> 上游环节未完成，无门禁结论。信息：{error_note or '见工作流日志'}")
+            lines.append("样例：" + "；".join(f"`{q[:8]}` {b}" for q, b in regressions))
+    elif state != STATE_ERROR:
+        lines.append("分析：—（门禁产物缺失）")
+    else:
+        lines.append(f"分析：{error_note or '见工作流日志'}")
     return "\n".join(lines)
 
 
@@ -86,7 +112,7 @@ def main() -> int:
         note = "未产出评测结果文件（评测步骤可能中途失败；后端 run 可能仍在执行，可查 evals 库）"
     text = build_message(raw, gate, state, note)
     if args.run_url:
-        text += f"\n> [查看完整日志与产物]({args.run_url})"
+        text += f"\n查看：[日志与产物]({args.run_url})"
     webhook = os.environ.get("WEBHOOK", "").strip()
     if not webhook:
         print("WEBHOOK 未配置，跳过推送:\n" + text)
