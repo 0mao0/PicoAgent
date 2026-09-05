@@ -78,6 +78,49 @@ class PollTimeoutTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 run_eval.poll_run(mock.Mock(), "r", timeout=0, interval=0)
 
+    def test_poll_uses_light_and_tolerates_transient_failure(self):
+        """nightly 实踩修复：轮询必须 light=true；一次瞬时查询异常不得中断（run 在后端活着）。"""
+        ep = mock.Mock()
+        ep.eval_run.return_value = "http://x/api/evals/runs/r"
+        ok = mock.Mock()
+        ok.json.return_value = {"run_id": "r", "status": "completed"}
+        with mock.patch.object(run_eval.requests, "get",
+                               side_effect=[run_eval.requests.ReadTimeout("blip"), ok]) as get, \
+             mock.patch.object(run_eval.time, "sleep"):
+            run = run_eval.poll_run(ep, "r", timeout=3600, interval=5)
+        self.assertEqual(run["status"], "completed")
+        self.assertIn("light=true", get.call_args_list[-1].args[0])
+
+
+class NotifyTests(unittest.TestCase):
+    """通知三态：缺门禁产物绝不显示'通过'（nightly 首跑绿卡片误报回归钉）。"""
+
+    RAW = {"run_id": "run-x", "summary_scores": {
+        "overall_score": 0.8768, "correct": 427, "total": 487,
+        "errored": 0, "judge_failed_count": 0, "retrieval_score": 0.92, "answer_score": 0.907}}
+    GATE = {"base_label": "R2 基线", "delta": 0.0267, "delta_ci95": [0.011, 0.042],
+            "matrix": {"pp": 380, "pf": 34, "fp": 21, "ff": 52}, "regressions": {}, "gate_reasons": []}
+
+    def test_green_contains_real_numbers(self):
+        from open_ragbench import notify
+        text = notify.build_message(self.RAW, self.GATE, "green")
+        self.assertIn("通过", text)
+        self.assertIn("87.68%", text)
+        self.assertIn("+2.67pp", text)
+        self.assertIn("双过380", text)
+
+    def test_missing_gate_cannot_be_green(self):
+        from open_ragbench import notify
+        # gate conclusion=success 但产物缺失 → 降级 error（模拟"通过"造假路径被堵死）
+        state = notify._STATE_BY_CONCLUSION.get("success")
+        self.assertEqual(state, "green")
+        text = notify.build_message(None, None, "error", "gate.json 缺失")
+        self.assertIn("执行失败", text)
+
+    def test_skipped_conclusion_is_error(self):
+        from open_ragbench import notify
+        self.assertEqual(notify._STATE_BY_CONCLUSION.get("skipped", "error"), "error")
+
 
 class ReportGateTests(unittest.TestCase):
     def _detail(self, qid, sem=1.0, fallback=False, quality="correct"):

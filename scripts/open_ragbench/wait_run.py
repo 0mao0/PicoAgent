@@ -36,7 +36,7 @@ def main() -> int:
             break
         time.sleep(args.interval)
 
-    run = requests.get(ep.eval_run(args.run_id), timeout=120).json()
+    run = requests.get(ep.eval_run(args.run_id), timeout=300).json()
     common.save_json(Path(args.out), run)
     s = run.get("summary_scores") or {}
     print("终态:", status, "overall:", s.get("overall_score"), "结果已存:", args.out, flush=True)

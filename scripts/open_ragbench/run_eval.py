@@ -32,12 +32,21 @@ def start_run(ep: common.Endpoints, dataset_id: str = common.DATASET_ID) -> str:
 
 
 def poll_run(ep: common.Endpoints, run_id: str, timeout: int, interval: int):
+    """轮询用 light=true（只回状态/进度）：nightly 实踩——run 越大，非 light 响应含全部
+    prediction 序列化越慢，3G 服务器上一度超过 60s read timeout 直接炸掉评测步骤。
+    瞬时查询失败按未知状态继续轮询（run 在后端正常执行，不该被一次毛刺判死）。"""
     deadline = time.time() + timeout
+    url = f"{ep.eval_run(run_id)}?light=true"
     run = {}
     while time.time() < deadline:
-        resp = requests.get(ep.eval_run(run_id), timeout=60)
-        resp.raise_for_status()
-        run = resp.json()
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            run = resp.json()
+        except (requests.RequestException, ValueError) as exc:
+            print(f"[poll] 瞬时查询失败，{interval}s 后继续: {exc}", flush=True)
+            time.sleep(interval)
+            continue
         if run.get("status") not in ("running", "pending", "queued"):
             return run
         time.sleep(interval)

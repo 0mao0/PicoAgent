@@ -20,10 +20,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from open_ragbench import anomaly, common
 
 
-def get_full_run(ep: common.Endpoints, run_id: str) -> dict:
-    resp = requests.get(ep.eval_run(run_id), timeout=120)
-    resp.raise_for_status()
-    return resp.json()
+def get_full_run(ep: common.Endpoints, run_id: str, attempts: int = 3) -> dict:
+    """全量详情是异常分类所需（all_scores.answer），一次拉取但带重试与宽松超时——
+    3G 服务器上序列化 487 题全量可能要几十秒（nightly 实踩 60s read timeout）。"""
+    last: Exception = RuntimeError("unreachable")
+    for _ in range(attempts):
+        try:
+            resp = requests.get(ep.eval_run(run_id), timeout=300)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as exc:
+            last = exc
+            time.sleep(10)
+    raise RuntimeError(f"拉取 run {run_id} 全量详情失败（{attempts} 次）: {last}")
 
 
 def poll(ep: common.Endpoints, run_id: str, interval: int = 10, timeout: int = 7200) -> dict:
