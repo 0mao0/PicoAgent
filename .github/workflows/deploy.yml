@@ -3,6 +3,17 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # 运行时路径变更才部署：nightly 实踩——纯 scripts/tests/docs 提交也触发重建重启
+    # （凌晨还会打断正在跑的评测）。git reset --hard 机制保证：被忽略的脚本改动会在
+    # 下一次真实部署时随 origin/main 一并同步到服务器，不会永久漂移。
+    paths-ignore:
+      - 'scripts/**'
+      - '.github/**'
+      - 'tests/**'
+      - 'docs/**'
+      - 'data/evals/**'
+      - '**.md'
+      - '.gitignore'
   workflow_dispatch:
 
 concurrency:
