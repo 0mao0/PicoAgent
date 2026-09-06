@@ -3,13 +3,7 @@
   <div class="ndd">
     <div class="ndd-overview">
       <div class="ndd-overview__left">
-        <div class="ndd-chips">
-          <span v-for="chip in chips" :key="chip.label" class="ndd-chip">
-            <i class="ndd-dot" :style="{ background: chip.color }" />{{ chip.label }}
-            <b>{{ chip.value ?? '—' }}</b>
-          </span>
-        </div>
-        <div v-if="hasMatrix" ref="donutEl" class="ndd-donut" />
+        <div v-if="hasMatrix" ref="matrixChartEl" class="ndd-matrix-chart" />
       </div>
       <div class="ndd-analysis">
         <p v-for="(line, i) in analysisLines" :key="i" class="ndd-analysis__line">{{ line }}</p>
@@ -157,16 +151,6 @@ const pct = (value?: number) => (value == null ? '—' : `${(value * 100).toFixe
 const hasMatrix = computed(() => cur.value.matrix != null)
 const matrixPf = computed(() => cur.value.matrix?.pf)
 
-const chips = computed(() => {
-  const m = cur.value.matrix || {}
-  return [
-    { label: '两晚都答对', value: m.pp, color: '#bfbfbf' },
-    { label: '今晚修复', value: m.pf, color: '#52c41a' },
-    { label: '今晚回退', value: m.fp, color: '#ff4d4f' },
-    { label: '两晚都答错', value: m.ff, color: '#8c8c8c' },
-  ]
-})
-
 /** 分行结论：一行一件事，不写门禁等内部术语；基线参照分写进差值句，不再单独展示 */
 const analysisLines = computed<string[]>(() => {
   const day = cur.value
@@ -200,31 +184,43 @@ const fixedHeader = computed(() => {
     : `新修复题目（昨晚答错 → 今晚答对，${total} 题）`
 })
 
-// ── 过渡矩阵 donut（echarts，沿用 ApiKeyChart 的全量 import 惯例）──
-const donutEl = ref<HTMLElement | null>(null)
+// ── 过渡矩阵横向柱状图（echarts，沿用 ApiKeyChart 的全量 import 惯例）──
+const matrixChartEl = ref<HTMLElement | null>(null)
 let chart: echarts.ECharts | undefined
 
 function renderChart(): void {
-  if (!donutEl.value || !hasMatrix.value) return
-  if (!chart) chart = echarts.init(donutEl.value)
+  if (!matrixChartEl.value || !hasMatrix.value) return
+  if (!chart) chart = echarts.init(matrixChartEl.value)
   const m = cur.value.matrix || {}
-  const total = (m.pp || 0) + (m.pf || 0) + (m.fp || 0) + (m.ff || 0)
+  const rows: Array<{ name: string; value: number; color: string }> = [
+    { name: '两晚都答对', value: m.pp ?? 0, color: '#bfbfbf' },
+    { name: '今晚修复', value: m.pf ?? 0, color: '#52c41a' },
+    { name: '今晚回退', value: m.fp ?? 0, color: '#ff4d4f' },
+    { name: '两晚都答错', value: m.ff ?? 0, color: '#8c8c8c' },
+  ]
   chart.setOption({
-    color: ['#bfbfbf', '#52c41a', '#ff4d4f', '#8c8c8c'],
-    tooltip: { trigger: 'item', formatter: '{b}: {c} 题（{d}%）' },
-    graphic: {
-      type: 'text', left: 'center', top: 'middle',
-      style: { text: `${total}`, fontSize: 20, fontWeight: 600, fill: '#888' },
+    tooltip: { trigger: 'item', formatter: '{b}：{c} 题' },
+    grid: { left: 4, right: 44, top: 4, bottom: 4, containLabel: true },
+    xAxis: {
+      type: 'value',
+      axisLabel: { show: false },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { show: false },
+    },
+    yAxis: {
+      type: 'category',
+      inverse: true,
+      data: rows.map(r => r.name),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: '#999', fontSize: 12 },
     },
     series: [{
-      type: 'pie', radius: ['62%', '82%'], avoidLabelOverlap: true,
-      label: { show: false }, emphasis: { scale: false },
-      data: [
-        { name: '两晚都答对', value: m.pp ?? 0 },
-        { name: '今晚修复', value: m.pf ?? 0 },
-        { name: '今晚回退', value: m.fp ?? 0 },
-        { name: '两晚都答错', value: m.ff ?? 0 },
-      ],
+      type: 'bar',
+      barWidth: 14,
+      data: rows.map(r => ({ value: r.value, itemStyle: { color: r.color, borderRadius: [0, 7, 7, 0] } })),
+      label: { show: true, position: 'right', color: '#999', fontSize: 12 },
     }],
   })
 }
@@ -276,32 +272,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 6px;
 }
-.ndd-chips {
-  display: flex;
-  gap: 8px 16px;
-  flex-wrap: wrap;
-}
-.ndd-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-secondary, rgba(0, 0, 0, 0.65));
-  white-space: nowrap;
-}
-.ndd-chip b {
-  color: var(--text-primary, rgba(0, 0, 0, 0.85));
-  font-size: 15px;
-}
-.ndd-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.ndd-donut {
+.ndd-matrix-chart {
   width: 100%;
-  max-width: 320px;
-  height: 200px;
+  max-width: 360px;
+  height: 140px;
 }
 .ndd-analysis__line {
   margin: 0;
