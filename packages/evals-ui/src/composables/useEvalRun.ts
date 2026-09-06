@@ -78,15 +78,21 @@ export function useEvalRun() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (resp.ok) {
-        // 新 run 从零开始：清空上一轮的逐题映射与单题评测集合。
-        // 不清会导致新 run 轮询合并时残留上一轮的质量标记（跨 run 幽灵数据）。
-        runDetails.value = new Map()
-        evaluatingQuestionIds.value = new Set()
-        currentRun.value = await resp.json()
-        runs.value = [currentRun.value!, ...runs.value.filter(r => r.run_id !== currentRun.value!.run_id)]
-        startPolling(currentRun.value!.run_id)
+      if (!resp.ok) {
+        // 启动失败必须显式抛出给调用方弹提示——旧实现静默吞掉（如全局评测锁
+        // "已有评测任务正在运行"400），用户点了按钮却毫不知情（2026-09-06 实踩）
+        const text = await resp.text().catch(() => '')
+        let detail = text
+        try { detail = JSON.parse(text)?.detail || text } catch { /* 保留原文 */ }
+        throw new Error(detail || `启动评测失败 (${resp.status})`)
       }
+      // 新 run 从零开始：清空上一轮的逐题映射与单题评测集合。
+      // 不清会导致新 run 轮询合并时残留上一轮的质量标记（跨 run 幽灵数据）。
+      runDetails.value = new Map()
+      evaluatingQuestionIds.value = new Set()
+      currentRun.value = await resp.json()
+      runs.value = [currentRun.value!, ...runs.value.filter(r => r.run_id !== currentRun.value!.run_id)]
+      startPolling(currentRun.value!.run_id)
     } finally {
       loading.value = false
     }
@@ -202,6 +208,13 @@ export function useEvalRun() {
         }
         startPolling(runningRun.run_id)
       }
+    } else if (currentRun.value) {
+      // 切到没有运行中任务的数据集：必须清掉上一数据集残留的 currentRun 并停表。
+      // 旧实现不清 → 在 A 数据集的评测跑到 B 数据集页面仍显示"停止评测"、
+      // 实时面板继续跳数（2026-09-06 实踩）
+      stopPolling()
+      currentRun.value = null
+      runDetails.value = new Map()
     }
 
     // 加载最近的已完成整体运行作为 lastRun

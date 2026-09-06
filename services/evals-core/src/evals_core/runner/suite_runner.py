@@ -654,7 +654,11 @@ def start_eval_run(
     if rescore_question_ids and not resume_run_id:
         raise ValueError("rescore_question_ids 仅在 resume_run_id 续跑时有意义")
     if _current_run_id is not None:
-        raise ValueError(f"已有评测任务正在运行 (run_id: {_current_run_id})，请等待完成后再试")
+        running = result_store.get_run(_current_run_id) or {}
+        running_ds = running.get("dataset_id") or "其他测试集"
+        raise ValueError(
+            f"已有评测任务正在运行（{running_ds}），请等待其完成或先停止后再试"
+        )
     
     all_questions = result_store.list_questions(dataset_id)
     if not all_questions:

@@ -1029,6 +1029,10 @@ const displayStatusTag = computed(() => {
   if (props.evaluating || props.detail?.status === 'running') {
     return { color: 'processing', label: '评测中' }
   }
+  // 没有本题任何运行上下文（无详情行）：不显示徽标。旧实现缺省返回"待评测"，
+  // 空页面也会满屏挂灰标造成噪音；真正评测排队中的题此刻都有 pending 详情行
+  //（runner 开跑即预写），不受影响（2026-09-06）。
+  if (!props.detail) return null
 
   const status = props.detail?.status || 'pending'
   const quality = props.detail?.quality as string | null | undefined
