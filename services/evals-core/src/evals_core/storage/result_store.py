@@ -138,6 +138,13 @@ def init_db() -> None:
         conn.execute("ALTER TABLE eval_run ADD COLUMN is_full_run INTEGER NOT NULL DEFAULT 1")
     except Exception:
         pass
+    # 属主进程 PID：启动清扫据此区分“进程已死的僵尸 running”与“其他活进程正在跑的 run”。
+    # 旧实现把所有 running 一律标 cancelled，多实例共库时新起实例会误杀活体评测
+    # （2026-09-06 实踩：53/487 的 run 被另一实例启动清扫取消）。0=历史行，清扫照旧回收。
+    try:
+        conn.execute("ALTER TABLE eval_run ADD COLUMN owner_pid INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
     _ensure_eval_question_columns(conn)
     conn.commit()
 
@@ -538,10 +545,10 @@ def create_run(dataset_id: str, total_questions: int, run_name: str = "", is_ful
     now = datetime.now().isoformat()
     conn = _get_conn()
     conn.execute(
-        """INSERT INTO eval_run (run_id, dataset_id, status, total_questions, completed_questions, started_at, run_name, is_full_run, config_snapshot)
-           VALUES (?, ?, 'running', ?, 0, ?, ?, ?, ?)""",
+        """INSERT INTO eval_run (run_id, dataset_id, status, total_questions, completed_questions, started_at, run_name, is_full_run, config_snapshot, owner_pid)
+           VALUES (?, ?, 'running', ?, 0, ?, ?, ?, ?, ?)""",
         (run_id, dataset_id, total_questions, now, run_name, 1 if is_full_run else 0,
-         json.dumps(config_snapshot, ensure_ascii=False) if config_snapshot else None),
+         json.dumps(config_snapshot, ensure_ascii=False) if config_snapshot else None, os.getpid()),
     )
     conn.commit()
     return {"run_id": run_id, "dataset_id": dataset_id, "status": "running",
@@ -575,8 +582,8 @@ def reset_run_for_resume(run_id: str, config_snapshot: Dict[str, Any]) -> None:
     避免同一轮评测产生两条记录。"""
     conn = _get_conn()
     conn.execute(
-        "UPDATE eval_run SET status = 'running', completed_at = NULL, summary_scores = NULL, config_snapshot = ? WHERE run_id = ?",
-        (json.dumps(config_snapshot, ensure_ascii=False), run_id),
+        "UPDATE eval_run SET status = 'running', completed_at = NULL, summary_scores = NULL, config_snapshot = ?, owner_pid = ? WHERE run_id = ?",
+        (json.dumps(config_snapshot, ensure_ascii=False), os.getpid(), run_id),
     )
     conn.commit()
 

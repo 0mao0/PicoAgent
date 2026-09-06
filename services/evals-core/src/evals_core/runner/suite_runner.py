@@ -613,14 +613,56 @@ def _run_suite_thread(
         result_store.cleanup_individual_runs(dataset_id)
 
 
+def _pid_alive(pid: int) -> bool:
+    """属主进程是否存活（无第三方依赖，Windows/Linux 双兼容）。
+
+    注意 Windows 上 os.kill(pid, 0) 不是探活而是 TerminateProcess，绝不能用。
+    PID 复用可能误判为"活"——后果只是推迟该行清扫（下次重启再收），
+    远好于把别的活进程正在跑的 run 误判为死而取消。"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        ERROR_ACCESS_DENIED = 5
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # 拒绝访问说明进程存在（属主是别的用户会话），视为存活
+            return kernel32.GetLastError() == ERROR_ACCESS_DENIED
+        try:
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+
+
 def sweep_interrupted_runs() -> int:
     """启动清扫：服务被强杀/重启后，评测线程已消失但 DB 行仍是 running——
     历史记录永远显示"评测中"、页面加载还会对幽灵 run 恢复轮询假进度
     （2026-09-06 实踩：停止无效的 20/25 僵尸行）。按实况标记为已取消并写
-    真实的部分汇总；"继续评测"按钮随即可断点续跑。返回清扫条数。"""
+    真实的部分汇总；"继续评测"按钮随即可断点续跑。返回清扫条数。
+
+    所有权守卫（2026-09-06 二次实踩后的根治）：owner_pid 仍存活的 running 属于
+    其他活着的实例，绝不取消——旧实现把一切 running 一律标 cancelled，多实例
+    共库时新起实例会误杀活体评测（53/487 事故）。owner_pid=0 的历史行照旧回收。"""
     swept = 0
     for r in result_store.list_runs():
         if r.get("status") != "running" or r.get("run_id") == _current_run_id:
+            continue
+        if _pid_alive(int(r.get("owner_pid") or 0)):
             continue
         details = result_store.list_run_details(r["run_id"], light=True)
         completed = [d for d in details if d.get("status") not in ("pending", "running")]
