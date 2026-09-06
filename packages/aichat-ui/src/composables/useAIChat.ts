@@ -308,12 +308,17 @@ export function useAIChat(options?: {
     manageContext([...messages.value], contextConfig)
 
     const contextItems = options?.getContextItems?.() || []
+    // @文档 提及（targetType='document'）把整个文档圈进检索范围（后端 ScopeContext.doc_ids）
+    const mentionedDocIds = inlineCitations
+      .filter(binding => String(binding.reference?.targetType || '') === 'document')
+      .map(binding => String(binding.reference?.docId || binding.reference?.targetId || ''))
+      .filter(Boolean)
     const queryRequest: QueryRequest = {
       query: userMessage.content,
       scene,
       session_id: currentSessionKey.value,
       library_id: String(unref(options?.libraryId) || 'default'),
-      doc_ids: contextItems.map(item => item.id),
+      doc_ids: [...new Set([...contextItems.map(item => item.id), ...mentionedDocIds])],
       inline_citations: inlineCitations,
     }
 

@@ -11,14 +11,15 @@
     >
       <div class="mention-main">
         <span class="mention-label">{{ candidate.label }}</span>
-        <span class="mention-type">{{ candidate.reference.targetType || 'content' }}</span>
+        <span class="mention-type">{{ isDocumentCandidate(candidate) ? '整文档' : (candidate.reference.targetType || 'content') }}</span>
       </div>
-      <div class="mention-meta">
+      <div v-if="!isDocumentCandidate(candidate)" class="mention-meta">
         <span class="mention-doc">{{ formatCitationDocTitle(candidate.reference.docTitle) }}</span>
         <span v-if="candidate.reference.pageIdx || candidate.reference.pageLabel">P{{ candidate.reference.pageLabel || candidate.reference.pageIdx }}</span>
       </div>
-      <div v-if="candidate.reference.sectionPath" class="mention-path">{{ candidate.reference.sectionPath }}</div>
+      <div v-if="!isDocumentCandidate(candidate) && candidate.reference.sectionPath" class="mention-path">{{ candidate.reference.sectionPath }}</div>
       <div
+        v-if="!isDocumentCandidate(candidate)"
         class="mention-snippet"
         :class="{
           'is-formula': isFormulaCandidate(candidate),
@@ -57,6 +58,10 @@ const emit = defineEmits<{
   select: [candidate: InlineCitationCandidate]
   hover: [index: number]
 }>()
+
+const isDocumentCandidate = (candidate: InlineCitationCandidate): boolean => (
+  String(candidate.reference.targetType || '').toLowerCase() === 'document'
+)
 
 const isFormulaCandidate = (candidate: InlineCitationCandidate): boolean => (
   String(candidate.reference.targetType || '').toLowerCase() === 'formula'
@@ -179,7 +184,7 @@ const renderCandidatePreview = (candidate: InlineCitationCandidate): string => {
 .mention-label {
   font-weight: 600;
   font-size: 13px;
-  color: #fff;
+  color: var(--text-primary, rgba(0, 0, 0, 0.88));
 }
 
 .mention-type,
@@ -200,7 +205,7 @@ const renderCandidatePreview = (candidate: InlineCitationCandidate): string => {
 
 .mention-snippet {
   margin-top: 4px;
-  color: #fff;
+  color: var(--text-secondary, rgba(0, 0, 0, 0.65));
   opacity: 0.9;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -228,12 +233,12 @@ const renderCandidatePreview = (candidate: InlineCitationCandidate): string => {
     border-collapse: collapse;
     table-layout: fixed;
     font-size: 10px;
-    color: #fff;
+    color: inherit;
   }
 
   :deep(.mention-preview-table th),
   :deep(.mention-preview-table td) {
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
     padding: 3px 5px;
     white-space: nowrap;
     overflow: hidden;

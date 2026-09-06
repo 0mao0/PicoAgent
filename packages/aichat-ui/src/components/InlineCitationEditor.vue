@@ -73,7 +73,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: () => ({ content: '', citations: [] }),
-  placeholder: '输入消息，Enter 发送...',
+  placeholder: '输入消息，按Enter发送\n按Shift+Enter换行...',
   disabled: false,
   searchCitations: undefined
 })
@@ -246,7 +246,13 @@ const getCaretOffset = (): number => {
   const preCaretRange = range.cloneRange()
   preCaretRange.selectNodeContents(root)
   preCaretRange.setEnd(range.startContainer, range.startOffset)
-  return preCaretRange.toString().length
+  // Range.toString() 不把 <br> 计入长度，但 rebuildFromDom 把 <br> 还原成 \n 计 1 字符；
+  // 两侧必须同口径，否则换行后光标偏移逐字错位
+  const preCaretFragment = preCaretRange.cloneContents()
+  const brCount = preCaretFragment instanceof DocumentFragment
+    ? preCaretFragment.querySelectorAll('br').length
+    : 0
+  return preCaretRange.toString().length + brCount
 }
 
 const setCaretOffset = (offset: number) => {
@@ -297,6 +303,15 @@ const setCaretOffset = (offset: number) => {
       return false
     }
 
+    // <br> 在 content 中占 1 个 \n（与 rebuildFromDom 口径一致）
+    if (node instanceof HTMLElement && node.tagName === 'BR') {
+      if (offset <= consumed + 1) {
+        return setAroundNode(node, offset > consumed)
+      }
+      consumed += 1
+      return false
+    }
+
     for (const child of Array.from(node.childNodes)) {
       if (visit(child)) {
         return true
@@ -328,6 +343,12 @@ const rebuildFromDom = (): InlineCitationDraftValue => {
       return
     }
     if (!(node instanceof HTMLElement)) return
+    // Shift+Enter 由浏览器插入 <br>；重建内容串时必须还原成 \n，
+    // 否则下一次按内容整体重渲染 DOM 会把换行吃掉（表现为“按了不换行”）
+    if (node.tagName === 'BR') {
+      content += '\n'
+      return
+    }
     const citationId = node.dataset.inlineCitationId
     if (citationId) {
       const source = citationMap.get(citationId)
@@ -598,7 +619,8 @@ defineExpose({
 
   &.is-empty::before {
     content: attr(data-placeholder);
-    color: var(--text-secondary);
+    /* 占位文案用三级弱化色，避免与正文同亮喧宾夺主 */
+    color: var(--text-tertiary, #999);
     pointer-events: none;
   }
 

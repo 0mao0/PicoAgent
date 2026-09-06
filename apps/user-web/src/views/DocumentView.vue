@@ -37,7 +37,7 @@
         v-else
         variant="empty"
         title="未打开文档"
-        description="从左侧知识库选择一个文档开始查看"
+        description="点击回答里的引用，可在这里溯源定位原文"
       />
     </div>
   </div>
@@ -45,7 +45,6 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick, computed } from 'vue'
-import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   PDFParsedWorkspace,
@@ -56,7 +55,6 @@ import {
 import { EmptyState, useTheme } from '@angineer/ui-kit'
 import { knowledgeApi } from '@/api/knowledge'
 import { useAuthStore } from '@/stores/auth'
-import { useWorkbenchStore } from '@/stores/workbench'
 
 const props = defineProps<{
   libraryId?: string
@@ -69,10 +67,8 @@ const props = defineProps<{
   sidePanelOpen?: boolean
 }>()
 
-const route = useRoute()
 const { isDark } = useTheme()
 const authStore = useAuthStore()
-const workbenchStore = useWorkbenchStore()
 const loading = ref(true)
 const loadError = ref<string>('')
 const document = ref<{ id: string; title: string; content: string } | null>(null)
@@ -88,21 +84,12 @@ const currentDocId = ref('')
 const pdfWorkspaceRef = ref<InstanceType<typeof PDFParsedWorkspace> | null>(null)
 const { resolveCitationTargetNode, applyCitationToWorkspace } = useKnowledgeCitation()
 
-/** 右侧解析对比面板：用户收起后保持收起（写入当前文档 tab，跨重挂载生效） */
-const sidePanelOpen = computed({
-  get: () => props.sidePanelOpen ?? true,
-  set: (value: boolean) => {
-    const docId = props.docId || currentDocId.value
-    if (!docId) return
-    const tabKey = `knowledge:${props.libraryId || authStore.libraryId || 'default'}:${docId}`
-    const tab = workbenchStore.tabs.find(t => t.key === tabKey)
-    if (tab) {
-      tab.props = { ...tab.props, sidePanelOpen: value }
-    }
-  }
-})
+/** 右侧解析对比面板：宿主未受控时用户收起后本地保持收起 */
+const localSidePanelOpen = ref(true)
+const sidePanelOpen = computed(() => props.sidePanelOpen ?? localSidePanelOpen.value)
 const onSidePanelOpenChange = (value: boolean) => {
-  sidePanelOpen.value = value
+  if (props.sidePanelOpen !== undefined) return
+  localSidePanelOpen.value = value
 }
 
 const pendingFocusCitation = ref<{ docId: string; citation: KnowledgeChatCitation } | null>(null)
@@ -151,7 +138,7 @@ const locateInContent = (content: string): { start: number; end: number } | null
 }
 
 const loadDocument = async () => {
-  const docId = (props.docId || route.params.id || '') as string
+  const docId = (props.docId || '') as string
   const libraryId = props.libraryId || authStore.libraryId || 'default'
   if (!docId) {
     loading.value = false

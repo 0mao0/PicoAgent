@@ -8,16 +8,6 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ChatHome.vue')
   },
   {
-    path: '/workspace',
-    name: 'Workspace',
-    component: () => import('@/views/Workspace.vue')
-  },
-  {
-    path: '/workspace/tab/:tabKey+',
-    name: 'TabDeepLink',
-    component: () => import('@/views/Workspace.vue')
-  },
-  {
     path: '/:pathMatch(.*)*',
     redirect: '/'
   }

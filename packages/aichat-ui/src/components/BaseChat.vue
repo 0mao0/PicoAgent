@@ -246,7 +246,7 @@
               size="small"
               class="mention-trigger-btn"
               :disabled="loading"
-              title="插入引用 @"
+              :title="mentionLabel"
               @click="handleInsertMentionTrigger"
             >
               @
@@ -271,6 +271,16 @@
           </div>
 
           <div class="center-actions">
+            <a-select
+              v-if="libraryOptions.length"
+              class="library-select"
+              size="small"
+              :value="libraryValue || undefined"
+              :disabled="loading"
+              :options="libraryOptions"
+              title="选择知识库（单选）"
+              @change="(value: string) => emit('update:libraryValue', value)"
+            />
             <a-select
               v-model:value="selectedModel"
               class="model-select"
@@ -389,6 +399,12 @@ interface Props {
   searchCitations?: (query: string) => Promise<InlineCitationCandidate[]>
   /** Hero 模式：无消息时整体垂直居中、输入卡片浮起居中（对话入口态） */
   hero?: boolean
+  /** @ 按钮提示文案（宿主按提及粒度定制，如“提及文档 @”） */
+  mentionLabel?: string
+  /** 知识库单选下拉选项（为空时不渲染，向后兼容） */
+  libraryOptions?: Array<{ value: string; label: string }>
+  /** 当前选中的知识库 id */
+  libraryValue?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -396,7 +412,7 @@ const props = withDefaults(defineProps<Props>(), {
   models: () => [],
   loadingModels: false,
   defaultModel: '',
-  placeholder: '输入消息，Enter 发送...',
+  placeholder: '输入消息，按Enter发送\n按Shift+Enter换行...',
   contextItems: () => [],
   title: 'AI 助手',
   icon: undefined,
@@ -408,7 +424,10 @@ const props = withDefaults(defineProps<Props>(), {
   renderMessage: undefined,
   allowImageUpload: true,
   searchCitations: undefined,
-  hero: false
+  hero: false,
+  mentionLabel: '插入引用 @',
+  libraryOptions: () => [],
+  libraryValue: ''
 })
 
 const emit = defineEmits<{
@@ -419,6 +438,7 @@ const emit = defineEmits<{
   removeContext: [id: string]
   modelChange: [model: string]
   selectCitation: [citation: BaseChatCitation]
+  'update:libraryValue': [libraryId: string]
 }>()
 
 const messagesRef = ref<HTMLElement | null>(null)
@@ -1795,7 +1815,7 @@ defineExpose({
       overflow-y: auto;
 
       &::placeholder {
-        color: var(--text-secondary);
+        color: var(--text-tertiary, #999);
       }
 
       &:focus {
@@ -1840,7 +1860,35 @@ defineExpose({
       flex: 1;
       min-width: 0;
       display: flex;
+      align-items: center;
       justify-content: flex-end;
+      gap: 8px;
+
+      .library-select {
+        width: 100%;
+        max-width: 160px;
+        flex-shrink: 0;
+
+        :deep(.ant-select-selector) {
+          font-size: 12px;
+          border-radius: 6px;
+          background: var(--bg-secondary, #fafafa);
+          color: var(--text-primary);
+          border-color: var(--border-color);
+        }
+
+        :deep(.ant-select-selection-item) {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: var(--text-primary);
+          font-size: 12px;
+        }
+
+        :deep(.ant-select-arrow) {
+          color: var(--text-secondary);
+        }
+      }
 
       .model-select {
         width: 100%;
@@ -1927,12 +1975,12 @@ defineExpose({
   }
 
   .chat-input {
+    /* 入口态不再包外层底板：编辑器自身已有描边/圆角，底板只是大一圈的冗余层 */
     width: min(820px, 92%);
     margin: 0 auto 24px;
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    background: var(--chat-input-bg, var(--bg-secondary, #ffffff));
-    box-shadow: var(--chat-hero-shadow, 0 8px 32px rgba(0, 0, 0, 0.12));
+    border: none;
+    background: transparent;
+    box-shadow: none;
   }
 }
 

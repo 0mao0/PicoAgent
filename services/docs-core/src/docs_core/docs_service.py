@@ -145,6 +145,82 @@ def _score_reference_candidate(
     return score
 
 
+def _build_document_candidates(
+    library_id: str,
+    nodes: List[Any],
+    query: str,
+    current_doc_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """文档级 @ 候选：标题包含即命中（前缀优先），空查询按库内顺序返回全部文档。"""
+    normalized = str(query or "").strip().lower()
+    items: List[Dict[str, Any]] = []
+    for node in nodes:
+        title = str(node.title or "").strip()
+        if not title:
+            continue
+        if normalized:
+            lowered = title.lower()
+            if lowered.startswith(normalized):
+                score = 2.0
+            elif normalized in lowered:
+                score = 1.0
+            else:
+                continue
+        else:
+            score = 1.0
+        if current_doc_id and current_doc_id == node.id:
+            score += 0.5
+        # chip 展示去扩展名（与前端 formatCitationDocTitle 的口径一致）
+        bare_title = re.sub(r"\.(pdf|docx?|xlsx?|pptx?|md|markdown|txt)$", "", title, flags=re.IGNORECASE)
+        label = bare_title if bare_title.startswith("《") else f"《{bare_title}》"
+        items.append({
+            "target_id": node.id,
+            "target_type": "document",
+            "library_id": library_id,
+            "doc_id": node.id,
+            "doc_title": title,
+            "page_idx": 0,
+            "page_label": None,
+            "section_path": "",
+            "label": label,
+            "snippet": "",
+            "content": "",
+            "content_type": "document",
+            "score": round(score, 3),
+            "rich_media": {},
+            "source_version": SCHEMA_VERSION,
+        })
+    return items
+
+
+def _dedupe_reference_candidates(
+    candidates: List[Dict[str, Any]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """引用候选统一排序 + 去重 + 截断。"""
+    candidates.sort(
+        key=lambda item: (
+            -float(item.get("score", 0.0) or 0.0),
+            str(item.get("doc_title") or ""),
+            int(item.get("page_idx") or 0),
+        )
+    )
+    deduped: List[Dict[str, Any]] = []
+    seen = set()
+    for item in candidates:
+        key = (
+            str(item.get("target_id") or ""),
+            str(item.get("doc_id") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if len(deduped) >= max(1, min(limit, 20)):
+            break
+    return deduped
+
+
 class KnowledgeLibrary(BaseModel):
     """知识库。"""
 
@@ -868,6 +944,15 @@ class DocsService:
             if node.type == "document"
         ]
         candidates: List[Dict[str, Any]] = []
+        # document 类型 = 文档级 @ 提及候选（@ 最多到文档，不下探块/章节）；
+        # 只请求 document 时跳过块级扫描，避免无谓的 canonical 查询。
+        if "document" in allowed_types:
+            candidates.extend(
+                _build_document_candidates(library_id, nodes, normalized_query, current_doc_id)
+            )
+        block_types = allowed_types - {"document"}
+        if not block_types:
+            return _dedupe_reference_candidates(candidates, limit)
         for node in nodes:
             blocks = []
             for keyword in keyword_candidates:
@@ -923,27 +1008,7 @@ class DocsService:
                     "rich_media": rich_media,
                     "source_version": SCHEMA_VERSION,
                 })
-        candidates.sort(
-            key=lambda item: (
-                -float(item.get("score", 0.0) or 0.0),
-                str(item.get("doc_title") or ""),
-                int(item.get("page_idx") or 0),
-            )
-        )
-        deduped: List[Dict[str, Any]] = []
-        seen = set()
-        for item in candidates:
-            key = (
-                str(item.get("target_id") or ""),
-                str(item.get("doc_id") or ""),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(item)
-            if len(deduped) >= max(1, min(limit, 20)):
-                break
-        return deduped
+        return _dedupe_reference_candidates(candidates, limit)
 
     # 获取文档节点的源文件名。
     def get_doc_source_file_name(self, doc_id: str) -> str:

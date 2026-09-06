@@ -1,7 +1,7 @@
 <template>
   <div v-if="!auth.isAuthed || authFailed" class="auth-gate">
     <div class="auth-card">
-      <h2>登录工作台</h2>
+      <h2>登录 AnGIneer</h2>
       <p class="auth-hint">请输入管理员为您创建的账号</p>
       <a-input
         v-model:value="username"

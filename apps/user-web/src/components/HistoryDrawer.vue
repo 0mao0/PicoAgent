@@ -1,9 +1,18 @@
 <template>
+  <!--
+    主题跟随：ant-design-vue 4.x 的 cssinjs 在主题切换后不会重刷已挂载抽屉（portal）的
+    颜色 token，切主题再打开会出现「黑底黑字/白底白字」。这里用内联样式绑定 CSS 变量，
+    每次主题切换（变量在 <html> 上原地更新）即时生效，不依赖 cssinjs 重算。
+  -->
   <a-drawer
     :open="open"
     placement="right"
     :width="340"
     :closable="false"
+    :content-wrapper-style="{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }"
+    :header-style="{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', borderColor: 'var(--border-color)' }"
+    :body-style="{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }"
+    :footer-style="{ background: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }"
     @update:open="(value: boolean) => emit('update:open', value)"
   >
     <template #title>
@@ -41,20 +50,13 @@
       </li>
     </ul>
 
-    <template #footer>
-      <a-button type="text" block @click="handleLogout">
-        <template #icon><LogoutOutlined /></template>
-        退出登录
-      </a-button>
-    </template>
   </a-drawer>
 </template>
 
 <script setup lang="ts">
-/** 历史会话抽屉：列表 / 恢复 / 删除 / 新建对话 / 退出登录 */
-import { PlusOutlined, DeleteOutlined, LogoutOutlined } from '@ant-design/icons-vue'
+/** 历史会话抽屉：列表 / 恢复 / 删除 / 新建对话（退出登录已上移到顶栏用户菜单） */
+import { PlusOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import type { ChatSessionRecord } from '@/composables/chatHistory'
-import { useAuthStore } from '@/stores/auth'
 
 defineProps<{
   open: boolean
@@ -69,8 +71,6 @@ const emit = defineEmits<{
   newChat: []
 }>()
 
-const authStore = useAuthStore()
-
 const relativeTime = new Intl.RelativeTimeFormat('zh', { numeric: 'auto' })
 
 const formatRelativeTime = (timestamp: number): string => {
@@ -83,10 +83,6 @@ const formatRelativeTime = (timestamp: number): string => {
   return new Date(timestamp).toLocaleDateString('zh-CN')
 }
 
-const handleLogout = async () => {
-  emit('update:open', false)
-  await authStore.logout()
-}
 </script>
 
 <style lang="less" scoped>

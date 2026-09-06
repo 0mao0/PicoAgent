@@ -11,10 +11,31 @@ const AICHAT_API_PROXY_TARGET = `http://${portContract.localHost}:${portContract
 const rootPackage = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')) as { version?: string }
 const APP_VERSION = rootPackage.version || '0.1.0'
 
+/**
+ * 从根 README「当前版本」行提取本版摘要，供顶栏版本号 hover 展示发版内容。
+ * 该行按发版约定把本版摘要以「vX.Y.Z <摘要>」追加在行尾；无匹配返回空串（顶栏退化为纯版本号）。
+ */
+function extractReleaseNotes(version: string): string {
+  try {
+    const readme = readFileSync(resolve(__dirname, '../../README.md'), 'utf8')
+    const line = readme.split(/\r?\n/).find(l => l.includes('当前版本：'))
+    if (!line) return ''
+    const marker = `v${version} `
+    const at = line.lastIndexOf(marker)
+    if (at < 0) return ''
+    return line.slice(at + marker.length).replace(/。+$/, '').trim()
+  } catch {
+    return ''
+  }
+}
+
+const RELEASE_NOTES = extractReleaseNotes(APP_VERSION)
+
 export default defineConfig({
   plugins: [vue(), pdfWasmPlugin()],
   define: {
-    'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION)
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION),
+    'import.meta.env.VITE_APP_RELEASE_NOTES': JSON.stringify(RELEASE_NOTES)
   },
   resolve: {
     alias: {

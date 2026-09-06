@@ -82,6 +82,8 @@ class KnowledgeReferenceSearchRequest(BaseModel):
     query: str
     limit: int = 10
     types: List[str] = ["content", "table", "formula", "figure"]
+    # 处理器一直透传 current_doc_id（当前文档候选加权），此前漏定义了字段导致必 500
+    current_doc_id: Optional[str] = None
 
 
 class BatchSoftDeleteRequest(BaseModel):

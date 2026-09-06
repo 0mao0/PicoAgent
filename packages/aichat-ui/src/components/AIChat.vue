@@ -20,12 +20,16 @@
     :render-message="renderAIChatMessage"
     :allow-image-upload="false"
     :hero="hero"
+    :library-options="libraryOptions"
+    :library-value="libraryValue"
+    :mention-label="mentionMode === 'document' ? '提及文档 @' : '插入引用 @'"
     @send="handleSend"
     @clear="clearMessages"
     @stop="stopGeneration"
     @remove-context="handleRemoveContext"
     @ready="handleReady"
     @select-citation="handleSelectCitation"
+    @update:library-value="emit('update:libraryValue', $event)"
   >
     <template #hero><slot name="hero" /></template>
   </BaseChat>
@@ -68,11 +72,20 @@ interface Props {
   hero?: boolean
   /** 数据传输层注入；不传时组件退化为纯 UI（模型列表为空、无法发送） */
   transport?: AIChatTransport
+  /**
+   * @ 提及粒度：reference=内容/表格/公式/图条目（默认，兼容旧宿主）；
+   * document=只到文档级（候选来自权限库内文档标题，选中后整文档圈定检索范围）。
+   */
+  mentionMode?: 'reference' | 'document'
+  /** 知识库单选下拉选项（为空时不渲染下拉，向后兼容） */
+  libraryOptions?: Array<{ value: string; label: string }>
+  /** 当前选中的知识库 id */
+  libraryValue?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
   defaultModel: '',
-  placeholder: '输入消息，Enter 发送...',
+  placeholder: '输入消息，按Enter发送\n按Shift+Enter换行...',
   contextItems: () => [],
   title: 'AI 助手',
   icon: undefined,
@@ -83,7 +96,10 @@ const props = withDefaults(defineProps<Props>(), {
   sessionId: 'default',
   libraryId: 'default',
   hero: false,
-  transport: undefined
+  transport: undefined,
+  mentionMode: 'reference',
+  libraryOptions: () => [],
+  libraryValue: ''
 })
 
 interface ModelOption { value: string; label: string }
@@ -96,6 +112,7 @@ const emit = defineEmits<{
   answerComplete: [message: AIChatMessage]
   selectCitation: [citation: AIChatCitation]
   messagesChange: [messages: AIChatMessage[]]
+  'update:libraryValue': [libraryId: string]
 }>()
 
 const sessionIdRef = computed(() => props.sessionId)
@@ -183,7 +200,8 @@ const searchInlineCitations = async (query: string): Promise<InlineCitationCandi
     library_id: props.libraryId,
     query,
     limit: 10,
-    types: ['content', 'table', 'formula', 'figure']
+    // document 模式：候选只到文档级（后端按标题匹配当前库内文档）
+    types: props.mentionMode === 'document' ? ['document'] : ['content', 'table', 'formula', 'figure']
   }
   const response = await props.transport.searchReferences(payload)
   const items = Array.isArray(response?.items) ? response.items : []

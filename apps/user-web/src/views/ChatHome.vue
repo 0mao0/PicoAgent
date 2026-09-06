@@ -4,34 +4,24 @@
     <div class="chat-body">
       <div class="chat-col">
         <AIChat
-          :key="scene"
           ref="aiChatRef"
           class="chat-instance"
           title=""
           :hero="!hasConversation"
           :show-context-info="false"
-          :scene="scene"
           :session-id="sessionId"
           :library-id="libraryId"
+          :mention-mode="'document'"
+          :library-options="libraryOptions"
+          :library-value="authStore.activeLibraryId"
           :transport="defaultAIChatTransport"
           @send="hasConversation = true"
           @messages-change="onMessagesChange"
           @select-citation="handleCitationSelect"
+          @update:library-value="onLibraryChange"
         >
           <template #hero>
             <h1 class="hero-title">今天，想查点什么？</h1>
-            <div class="hero-scene-chips">
-              <button
-                type="button"
-                :class="{ active: scene === 'docs' }"
-                @click="scene = 'docs'"
-              >知识库问答</button>
-              <button
-                type="button"
-                :class="{ active: scene === 'sops' }"
-                @click="scene = 'sops'"
-              >SOP 问答</button>
-            </div>
           </template>
         </AIChat>
       </div>
@@ -67,12 +57,13 @@
 <script setup lang="ts">
 /**
  * 对话优先首页：
- * - Hero 态（无消息）：AIChat hero 模式，居中大输入框 + 场景 chip；
+ * - Hero 态（无消息）：AIChat hero 模式，居中大输入框；
  * - 对话态：同一 AIChat 实例展示消息流；点引用在右侧溯源面板（复用 DocumentView
  *   的 PDF/Markdown 分支与 bbox 定位）打开目标文档并定位；
+ * - 知识库：输入框下拉单选（仅权限内库），@ 提及当前库内文档（文档级圈定检索范围）；
  * - 历史：@messagesChange 落盘 localStorage（chatHistory.ts），抽屉恢复。
  */
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { CloseOutlined } from '@ant-design/icons-vue'
 import { AIChat } from '@angineer/aichat-ui'
 import type { AIChatMessage, AIChatCitation } from '@angineer/aichat-ui'
@@ -81,6 +72,7 @@ import ChatTopBar from '@/components/ChatTopBar.vue'
 import HistoryDrawer from '@/components/HistoryDrawer.vue'
 import { defaultAIChatTransport } from '../../../shared/chatTransport'
 import { useAuthStore } from '@/stores/auth'
+import { knowledgeApi } from '@/api/knowledge'
 import {
   deriveTitle,
   listSessions,
@@ -92,10 +84,24 @@ import type { ChatSessionRecord } from '@/composables/chatHistory'
 const authStore = useAuthStore()
 const libraryId = computed(() => authStore.libraryId || 'default')
 
+/** 知识库单选下拉：只列当前用户被授权的库，名称解析失败回退显示 id */
+const libraryNames = ref<Record<string, string>>({})
+const libraryOptions = computed(() =>
+  authStore.libraries.map((id) => ({ value: id, label: libraryNames.value[id] || id }))
+)
+const loadLibraryNames = async () => {
+  try {
+    const list = await knowledgeApi.getLibraries() as unknown as { id: string; name: string }[]
+    libraryNames.value = Object.fromEntries(list.map((l) => [l.id, l.name]))
+  } catch {
+    // 名称加载失败时下拉回退显示库 id
+  }
+}
+onMounted(() => { void loadLibraryNames() })
+
 const aiChatRef = ref<InstanceType<typeof AIChat> | null>(null)
 const docViewRef = ref<InstanceType<typeof DocumentView> | null>(null)
 
-const scene = ref<'docs' | 'sops'>('docs')
 const sessionId = ref(`chat-${Date.now().toString(36)}`)
 const hasConversation = ref(false)
 const historyOpen = ref(false)
@@ -116,7 +122,7 @@ const onMessagesChange = (messages: AIChatMessage[]) => {
   hasConversation.value = true
   saveSession(localStorage, libraryId.value, {
     id: sessionId.value,
-    scene: scene.value,
+    scene: 'docs',
     title: deriveTitle(messages),
     updatedAt: Date.now(),
     messages: messages.filter(m => m.role !== 'system'),
@@ -142,11 +148,21 @@ const closePanel = () => {
 const restoreSession = async (record: ChatSessionRecord) => {
   historyOpen.value = false
   closePanel()
-  scene.value = record.scene === 'sops' ? 'sops' : 'docs'
   sessionId.value = record.id
-  await nextTick() // 等 :key 重建 / sessionId watch 切会话完成
+  await nextTick() // 等 sessionId watch 切会话完成
   aiChatRef.value?.loadSession(record.messages as AIChatMessage[])
   hasConversation.value = true
+}
+
+/** 切换知识库：知识库集合变了就开新会话（旧会话历史按库分桶，留在原库） */
+const onLibraryChange = async (id: string) => {
+  if (!id || id === authStore.activeLibraryId) return
+  authStore.switchLibrary(id)
+  closePanel()
+  aiChatRef.value?.startNewChat?.()
+  sessionId.value = `chat-${Date.now().toString(36)}`
+  hasConversation.value = false
+  refreshSessions() // 历史按新库重新列
 }
 
 const deleteSession = (id: string) => {
@@ -236,27 +252,5 @@ const startNewChat = () => {
   font-weight: 600;
   margin: 0 0 20px;
   color: var(--text-primary);
-}
-
-.hero-scene-chips {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  margin-bottom: 8px;
-
-  button {
-    padding: 4px 14px;
-    border-radius: 14px;
-    border: 1px solid var(--border-color);
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 13px;
-
-    &.active {
-      color: var(--primary-color);
-      border-color: var(--primary-color);
-    }
-  }
 }
 </style>
