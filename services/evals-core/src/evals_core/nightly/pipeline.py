@@ -76,6 +76,18 @@ async def _auto_retry(run_id: str, dataset_id: str, rounds: int, deadline: float
     return await asyncio.to_thread(result_store.get_run, run_id)
 
 
+def _dataset_subject(dataset_id: str) -> str:
+    """维护内容展示名：题集标题（题数 题）；读取失败退回 id。"""
+    try:
+        from evals_core.dataset import manager
+        ds = manager.get_dataset(dataset_id) or {}
+        title = ds.get("title") or dataset_id
+        count = ds.get("question_count")
+        return f"{title}（{count} 题）" if count else title
+    except Exception:  # noqa: BLE001
+        return dataset_id
+
+
 async def _compute_and_publish(run_id: str, dataset_id: str, resamples: int, site_url: str, webhook: str) -> dict:
     """门禁 + 报告 + 落盘 + 通知，全成功返回结论 dict（state=green/red）。"""
     loop_run = await asyncio.to_thread(result_store.get_run, run_id)
@@ -93,7 +105,8 @@ async def _compute_and_publish(run_id: str, dataset_id: str, resamples: int, sit
     q_texts = archive.load_question_texts(paths.dataset_json_path(dataset_id))
     entry = archive.build_entry(
         gate_res, loop_run.get("summary_scores") or {}, q_texts,
-        dataset_id, paths.today_bjt(), run_id=run_id, state=state)
+        dataset_id, paths.today_bjt(), run_id=run_id, state=state,
+        subject=_dataset_subject(dataset_id))
     archive.publish_day(entry, report_md)
 
     raw_for_card = {k: loop_run.get(k) for k in ("started_at", "completed_at")}
@@ -148,7 +161,8 @@ async def run_nightly(*, dataset_id: str,
         logger.exception("nightly 流水线失败（run=%s）", run_id)
         note = f"{type(exc).__name__}: {str(exc)[:280]}"
         try:
-            archive.publish_day(archive.build_error_entry(dataset_id, date, note), None)
+            archive.publish_day(archive.build_error_entry(
+                dataset_id, date, note, subject=_dataset_subject(dataset_id)), None)
             await _notify_best_effort(webhook, notify.build_message(None, None, notify.STATE_ERROR, note))
         except Exception:  # noqa: BLE001 兜底路径再失败只留日志
             logger.exception("nightly error 档结论落盘/通知也失败")

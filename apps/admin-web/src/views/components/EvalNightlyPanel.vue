@@ -44,7 +44,10 @@
       </template>
 
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'time'">
+        <template v-if="column.key === 'subject'">
+          {{ record.subject || record.dataset_id || '—' }}
+        </template>
+        <template v-else-if="column.key === 'time'">
           {{ fmtTime(record.generated_at) }}
         </template>
         <template v-else-if="column.key === 'state'">
@@ -118,6 +121,7 @@ import NightlyDayDetail from './NightlyDayDetail.vue'
 interface NightlyDay {
   date: string
   state: string
+  subject?: string
   generated_at?: string
   overall_score?: number
   correct?: number
@@ -149,6 +153,7 @@ const EMPTY_TEXT = '暂无夜间维护记录 —— nightly 评测流程每晚�
 
 const columns: DataTableColumn[] = [
   { title: '序号', key: 'seq', width: 60, minWidth: 50, customRender: ({ index }: { index: number }) => index + 1 },
+  { title: '维护内容', key: 'subject', width: 240, minWidth: 150, ellipsis: true },
   { title: '时间', key: 'time', width: 150, minWidth: 120 },
   { title: '结论', key: 'state', width: 80, minWidth: 64 },
   { title: '平均分', key: 'overall', width: 92, minWidth: 80 },

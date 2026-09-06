@@ -39,9 +39,13 @@ def build_nightly_entry(artifacts_dir: Path, dataset_id: str, date: str, error_n
     question_texts = (_archive.load_question_texts(dataset_file) if dataset_file else {})
     state = "red" if gate.get("gate_red") else "green"
     summary = (raw or {}).get("summary_scores") or {}
+    subject = ""
+    if dataset_file:
+        meta = (_load_json(Path(dataset_file)) or {}).get("dataset") or {}
+        subject = str(meta.get("title") or "")
     return _archive.build_entry(
         gate, summary, question_texts, dataset_id, date,
-        run_id=gate.get("new") or (raw or {}).get("run_id") or "", state=state)
+        run_id=gate.get("new") or (raw or {}).get("run_id") or "", state=state, subject=subject)
 
 
 def main() -> int:

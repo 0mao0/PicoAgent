@@ -72,6 +72,8 @@ class _Env(unittest.TestCase):
             mock.patch.object(pipeline.result_store, "list_run_details", side_effect=lambda _id, light=False: list(next(details_iter))),
             mock.patch("evals_core.nightly.gate.load_baseline",
                        return_value={"run_id": "run-base", "details": list(_BASE_DETAILS), "_baseline_label": "R2"}),
+            mock.patch("evals_core.dataset.manager.get_dataset",
+                       return_value={"dataset_id": "ds", "title": "冒烟集", "question_count": 25}),
             mock.patch("evals_core.nightly.pipeline.notify.send", return_value='{"errcode":0}'),
             mock.patch.object(pipeline, "_sleep", new=lambda _s: asyncio.sleep(0)),
         ]
@@ -95,6 +97,7 @@ class PipelineGreenTests(_Env):
         entry = json.loads((day_dirs[0] / "nightly.json").read_text(encoding="utf-8"))
         self.assertEqual(entry["state"], "green")
         self.assertEqual(entry["run_id"], "run-x")
+        self.assertEqual(entry["subject"], "冒烟集（25 题）")
         self.assertEqual(entry["correct"], 2)
         self.assertTrue((day_dirs[0] / "report.md").exists())
         self.assertEqual([i["question"] for i in entry["fixed_items"]], ["题干 q2"])
@@ -126,6 +129,7 @@ class PipelineErrorTests(_Env):
     def test_start_failure_still_publishes_error_day(self):
         patches = [
             mock.patch.object(pipeline.suite_runner, "start_eval_run", side_effect=RuntimeError("题库缺失")),
+            mock.patch("evals_core.dataset.manager.get_dataset", return_value=None),
             mock.patch("evals_core.nightly.pipeline.notify.send", return_value='{"errcode":0}'),
         ]
         for p in patches:
@@ -136,6 +140,7 @@ class PipelineErrorTests(_Env):
         self.assertIn("题库缺失", result["detail"])
         entry = json.loads(next((self.tmp / "nightly").glob("*/nightly.json")).read_text(encoding="utf-8"))
         self.assertEqual(entry["state"], "error")
+        self.assertEqual(entry["subject"], "ds")  # 题集查不到时维护内容退回 dataset_id
         self.assertIn("题库缺失", entry["note"])
         self.assertEqual(entry["verdict"], "评测中断，未出结果")
 
