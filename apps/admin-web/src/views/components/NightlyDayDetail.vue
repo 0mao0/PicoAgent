@@ -49,14 +49,14 @@
         />
         <ul v-else class="ndd-qlist">
           <li v-for="item in regressions" :key="item.qid" class="ndd-qitem">
-            <div class="ndd-qitem__head">
-              <a-tooltip :title="item.bucket_detail || undefined">
-                <a-tag :color="bucketColor(item.bucket)">{{ bucketPlain(item.bucket) }}</a-tag>
-              </a-tooltip>
-              <span class="ndd-qitem__mark">昨晚 ✓ → 今晚 ✗</span>
-            </div>
+            <a-tooltip :title="`${bucketPlain(item.bucket)}${item.bucket_detail ? `（${item.bucket_detail}）` : ''}`">
+              <a-tag :color="bucketColor(item.bucket)" class="ndd-qitem__tag">{{ bucketShort(item.bucket) }}</a-tag>
+            </a-tooltip>
             <a-tooltip :title="item.question || undefined">
               <p class="ndd-qitem__q">{{ item.question || `题目 ${item.qid.slice(0, 8)}` }}</p>
+            </a-tooltip>
+            <a-tooltip title="昨晚答对，今晚答错">
+              <span class="ndd-qitem__mark ndd-qitem__mark--down">✓→✗</span>
             </a-tooltip>
           </li>
         </ul>
@@ -65,12 +65,12 @@
       <a-collapse-panel key="fixed" :header="fixedHeader">
         <ul class="ndd-qlist">
           <li v-for="item in fixed" :key="item.qid" class="ndd-qitem ndd-qitem--fixed">
-            <div class="ndd-qitem__head">
-              <a-tag color="success">已修复</a-tag>
-              <span class="ndd-qitem__mark">昨晚 ✗ → 今晚 ✓</span>
-            </div>
+            <a-tag color="success" class="ndd-qitem__tag">已修复</a-tag>
             <a-tooltip :title="item.question || undefined">
               <p class="ndd-qitem__q">{{ item.question || `题目 ${item.qid.slice(0, 8)}` }}</p>
+            </a-tooltip>
+            <a-tooltip title="昨晚答错，今晚答对">
+              <span class="ndd-qitem__mark ndd-qitem__mark--up">✗→✓</span>
             </a-tooltip>
           </li>
         </ul>
@@ -134,7 +134,19 @@ const BUCKET_PLAIN: Record<string, string> = {
   wrong_conclusion: '内容相关但结论错了',
   severe_miss: '完全答偏',
 }
+/** 条目行内的短标签（完整解释放 tooltip），保证一行放得下、不出横向滚动 */
+const BUCKET_SHORT: Record<string, string> = {
+  infra_anomaly: '评判抖动',
+  retrieval_regression: '检索变差',
+  refusal: '拒答',
+  route_change: '路径变化',
+  no_semantic_eval: '缺评',
+  partial_coverage: '答得不全',
+  wrong_conclusion: '结论错',
+  severe_miss: '答偏',
+}
 const bucketPlain = (bucket?: string) => (bucket && BUCKET_PLAIN[bucket]) || bucket || '未知原因'
+const bucketShort = (bucket?: string) => (bucket && BUCKET_SHORT[bucket]) || bucket || '未知'
 const bucketColor = (bucket?: string) => (bucket === 'infra_anomaly' ? 'default' : 'orange')
 
 /** 列表页已回传整份 nightly.json，明细接口回来后用更全的那份 */
@@ -321,38 +333,48 @@ onBeforeUnmount(() => {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   max-height: 420px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
+/* 单行紧凑条目：标签 + 单行省略题干 + 状态符号，全部受父宽约束 */
 .ndd-qitem {
-  border: 1px solid var(--border-color, rgba(5, 5, 5, 0.06));
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: var(--card-bg, var(--bg-primary, #fff));
-}
-.ndd-qitem__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border-color, rgba(5, 5, 5, 0.06));
+  border-radius: 6px;
+  padding: 3px 8px;
+  background: var(--card-bg, var(--bg-primary, #fff));
 }
-.ndd-qitem__mark {
-  font-size: 12px;
-  color: var(--text-secondary, rgba(0, 0, 0, 0.45));
-  white-space: nowrap;
+.ndd-qitem__tag {
+  flex-shrink: 0;
+  margin-inline-end: 0;
 }
 .ndd-qitem__q {
-  margin: 4px 0 0;
-  font-size: 13px;
-  line-height: 20px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--text-primary, rgba(0, 0, 0, 0.85));
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ndd-qitem__mark {
+  flex-shrink: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ndd-qitem__mark--down {
+  color: #ff4d4f;
+}
+.ndd-qitem__mark--up {
+  color: #52c41a;
 }
 .ndd-qitem--fixed .ndd-qitem__q {
   color: var(--text-secondary, rgba(0, 0, 0, 0.65));
