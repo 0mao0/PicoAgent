@@ -1,10 +1,9 @@
 name: Eval Nightly (Open RAGBench v2)
 
-# 对已部署实例（本机回环 8791）跑 487 题全量，与钉住的基线做逐题对比门禁，
-# 结果推企微。评测异常自动补判/重跑（--auto-retry）。
-# 定时不由 GitHub cron 触发（cron 不守时，2026-09-06 实到延迟近 2h）：服务器
-# aichat-api 内置调度器按管理页「夜间维护」设置的时间（默认北京 01:00）经
-# workflow_dispatch 触发本流程；也可在管理页/Actions 页面手动触发。
+# 【仅作手工调试备用】nightly 已全内置：评测→补判→门禁→落盘结论→企微 由
+# aichat-api 内置调度器/管理页直接执行（evals_core.nightly.pipeline，与「开始评测」
+# 同源），不再经过 GitHub 与 runner。本 workflow 保留用于在干净环境手工复跑同一串
+# 脚本排查问题；勿再加 schedule 触发（会与内置调度双跑）。
 on:
   workflow_dispatch: {}
 
