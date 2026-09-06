@@ -613,6 +613,30 @@ def _run_suite_thread(
         result_store.cleanup_individual_runs(dataset_id)
 
 
+def sweep_interrupted_runs() -> int:
+    """启动清扫：服务被强杀/重启后，评测线程已消失但 DB 行仍是 running——
+    历史记录永远显示"评测中"、页面加载还会对幽灵 run 恢复轮询假进度
+    （2026-09-06 实踩：停止无效的 20/25 僵尸行）。按实况标记为已取消并写
+    真实的部分汇总；"继续评测"按钮随即可断点续跑。返回清扫条数。"""
+    swept = 0
+    for r in result_store.list_runs():
+        if r.get("status") != "running" or r.get("run_id") == _current_run_id:
+            continue
+        details = result_store.list_run_details(r["run_id"], light=True)
+        completed = [d for d in details if d.get("status") not in ("pending", "running")]
+        correct = sum(1 for d in completed if d.get("quality") == "correct")
+        wrong = sum(1 for d in completed if d.get("quality") == "wrong")
+        errored = sum(1 for d in completed if d.get("status") == "error")
+        total = r.get("total_questions") or len(details)
+        summary = {
+            "overall_score": 0.0, "total": total, "correct": correct,
+            "wrong": wrong, "skipped": max(0, total - len(completed)), "errored": errored,
+        }
+        result_store.cancel_run(r["run_id"], summary)
+        swept += 1
+    return swept
+
+
 def start_eval_run(
     dataset_id: str, question_id: Optional[str] = None, save: bool = True,
     override_doc_ids: Optional[List[str]] = None, resume_run_id: Optional[str] = None,

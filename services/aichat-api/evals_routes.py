@@ -35,8 +35,12 @@ evals_router = APIRouter()
 
 @evals_router.on_event("startup")
 async def _startup():
-    """应用启动时初始化数据库。"""
+    """应用启动时初始化数据库，并清扫上次进程被杀留下的僵尸 running run。"""
+    import logging
     result_store.init_db()
+    swept = suite_runner.sweep_interrupted_runs()
+    if swept:
+        logging.getLogger("evals").warning("启动清扫：%d 个中断评测已标记为已取消（可断点续跑）", swept)
 
 
 # --- 题集管理 ---
