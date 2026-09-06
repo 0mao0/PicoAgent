@@ -162,6 +162,48 @@ def attribute(qid: str, base: dict, new: dict) -> str:
     return "severe_miss(sem<0.2)"
 
 
+EVIDENCE_REASON_MAX = 160
+EVIDENCE_ANSWER_MAX = 260
+
+
+def evidence(base: dict, new: dict) -> dict:
+    """回退题的逐题前后对比证据（站点展开查看用，字段全部可缺省）。
+
+    只带定位问题所需的差分与原文摘录，不带 citations/retrieved_items 等大字段——
+    它会进 nightly.json，直接过接口给前端。"""
+    ev: dict = {}
+    b_pred, n_pred = _parse_json_field(base.get("prediction")), _parse_json_field(new.get("prediction"))
+    route = {}
+    for field in PREDICTION_KEEP:
+        bv, nv = b_pred.get(field), n_pred.get(field)
+        if bv and nv and bv != nv:
+            route[field] = {"base": bv, "new": nv}
+    if route:
+        ev["route"] = route
+    retrieval = {}
+    for key in ("hit@5_doc", "citation_hit"):
+        bv, nv = _retrieval(base, key), _retrieval(new, key)
+        if bv is not None or nv is not None:
+            retrieval[key] = {"base": bv, "new": nv}
+    if retrieval:
+        ev["retrieval"] = retrieval
+    b_sem, n_sem = _answer(base, "semantic_score"), _answer(new, "semantic_score")
+    if b_sem is not None or n_sem is not None:
+        ev["semantic"] = {"base": b_sem, "new": n_sem, "threshold": _answer(new, "semantic_threshold")}
+    b_ha, n_ha = _answer(base, "has_answer"), _answer(new, "has_answer")
+    if b_ha is not None and b_ha != n_ha:
+        ev["has_answer"] = {"base": b_ha, "new": n_ha}
+    reason = str(_answer(new, "semantic_reason") or "")[:EVIDENCE_REASON_MAX]
+    if reason:
+        ev["reason"] = reason
+    excerpt = str(n_pred.get("answer") or "")[:EVIDENCE_ANSWER_MAX]
+    if excerpt:
+        ev["answer_excerpt"] = excerpt
+    if new.get("error"):
+        ev["error"] = str(new["error"])[:EVIDENCE_REASON_MAX]
+    return ev
+
+
 # ---------- 配对 bootstrap CI ----------
 
 def paired_delta_ci(matrix: dict, resamples: int = 1000, seed: int = 42):
@@ -238,6 +280,7 @@ def cmd_compare(args) -> int:
         "delta_ci95": [round(lo, 4), round(hi, 4)] if lo is not None else None,
         "buckets": bucket_cis, "anomalies": {k: v for k, v in anomalies.items() if v},
         "regressions": regressions, "fixed": sorted(matrix["pf"]),
+        "regression_details": {qid: evidence(base_map[qid], new_map[qid]) for qid in matrix["fp"]},
         "gate_red": bool(reasons), "gate_reasons": reasons,
     }
     lines = [

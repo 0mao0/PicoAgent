@@ -59,16 +59,21 @@ def _load_question_texts(dataset_file) -> dict:
     return out
 
 
-def _question_items(qids, buckets: dict, question_texts: dict, limit: int) -> list:
+def _question_items(qids, buckets: dict, question_texts: dict, limit: int,
+                    evidence_map: dict = None) -> list:
     items = []
     for qid in list(qids)[:limit]:
         bucket = str(buckets.get(qid) or "")
-        items.append({
+        item = {
             "qid": qid,
             "question": question_texts.get(qid, ""),
             "bucket": bucket.split("(", 1)[0],  # 机读码，前端映射大白话；原始串留 tooltip
             "bucket_detail": bucket,
-        })
+        }
+        ev = (evidence_map or {}).get(qid)
+        if ev:
+            item["evidence"] = ev  # 逐题前后对比证据（展开查看"问题具体在哪"）
+        items.append(item)
     return items
 
 
@@ -121,7 +126,10 @@ def build_nightly_entry(artifacts_dir: Path, dataset_id: str, date: str, error_n
         "gate_reasons": gate.get("gate_reasons") or [],
         "regressions": regressions,
         "verdict": _verdict(state, gate.get("delta"), len(regressions)),
-        "regression_items": _question_items(reg_ids, regressions, question_texts, REGRESSION_ITEMS_MAX),
+        "regression_items": _question_items(
+            reg_ids, regressions, question_texts, REGRESSION_ITEMS_MAX,
+            gate.get("regression_details") or {},
+        ),
         "fixed_items": _question_items(gate.get("fixed") or [], {}, question_texts, FIXED_ITEMS_MAX),
     }
 

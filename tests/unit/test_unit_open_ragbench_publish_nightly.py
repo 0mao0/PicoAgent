@@ -80,6 +80,8 @@ class PublishNightlyTests(unittest.TestCase):
             "q-b": "severe_miss(sem<0.2)",
             "q-a": "refusal(该答却拒答/无答案)",
             "q-c": "refusal(该答却拒答/无答案)",
+        }, regression_details={
+            "q-a": {"semantic": {"base": 0.9, "new": 0.4}, "reason": "整体拒答"},
         })
         (self.artifacts / "gate.json").write_text(json.dumps(gate, ensure_ascii=False), encoding="utf-8")
         entry = publish_nightly.build_nightly_entry(
@@ -90,6 +92,9 @@ class PublishNightlyTests(unittest.TestCase):
         self.assertEqual(first["bucket"], "refusal")  # 机读码与详情分离
         self.assertEqual(first["bucket_detail"], "refusal(该答却拒答/无答案)")
         self.assertEqual(first["question"], "题干 A 全文")
+        self.assertEqual(first["evidence"], {"semantic": {"base": 0.9, "new": 0.4}, "reason": "整体拒答"})
+        self.assertNotIn("evidence", entry["regression_items"][2])  # 无证据的题不带该键
+        self.assertNotIn("evidence", entry["fixed_items"][0])       # 修复题不带证据
         self.assertEqual(entry["regression_items"][2]["question"], "")  # 题集缺该题 → 空串不炸
         self.assertEqual(entry["fixed_items"][0],
                          {"qid": "f-1", "question": "修复题 1", "bucket": "", "bucket_detail": ""})

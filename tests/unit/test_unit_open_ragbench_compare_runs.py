@@ -60,6 +60,30 @@ class MatrixTests(unittest.TestCase):
         self.assertTrue(any("未清零异常" in r for r in reasons))
 
 
+class EvidenceTests(unittest.TestCase):
+    def test_evidence_captures_deltas(self):
+        base = _d("q1", "correct", hit5=1, sem=0.9)
+        new = _d("q1", "wrong", hit5=0, sem=0.4, refusal=True, intent="L2")
+        new["prediction"]["answer"] = "抱歉，无法回答该问题。" + "补" * 300
+        new["all_scores"]["answer"]["semantic_threshold"] = 0.65
+        ev = compare_runs.evidence(base, new)
+        self.assertEqual(ev["route"], {"intent": {"base": "L1", "new": "L2"}})
+        self.assertEqual(ev["retrieval"]["hit@5_doc"], {"base": 1, "new": 0})
+        self.assertEqual(ev["semantic"], {"base": 0.9, "new": 0.4, "threshold": 0.65})
+        self.assertEqual(ev["has_answer"], {"base": True, "new": False})
+        self.assertIn("拒答", ev["reason"])
+        self.assertLessEqual(len(ev["answer_excerpt"]), compare_runs.EVIDENCE_ANSWER_MAX)
+
+    def test_evidence_omits_unchanged_and_missing(self):
+        d = _d("q1", "correct")
+        ev = compare_runs.evidence(d, d)
+        self.assertNotIn("route", ev)      # 前后一致不进证据
+        self.assertNotIn("has_answer", ev)
+        self.assertIn("semantic", ev)      # 语义分始终给出（可对照过线阈值）
+        self.assertNotIn("error", ev)
+        self.assertNotIn("answer_excerpt", ev)  # fixture prediction 无 answer 字段
+
+
 class AttributionTests(unittest.TestCase):
     def test_buckets(self):
         base = _d("q", "correct", hit5=1, sem=1.0, intent="L1")
