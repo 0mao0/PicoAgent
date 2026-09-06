@@ -54,6 +54,8 @@ class StartEvalRunRequest(BaseModel):
     # 运行（被测）模型即 config_name；judge_config_name 为 UI 新增评测弹框选定的评价模型，
     # 判分候选链首位、失败回退环境链，并记入 run manifest
     judge_config_name: Optional[str] = None
+    # UI「重来」：原地清空该 run 旧明细与进度、复用同一记录重跑全部题目（与 resume_run_id 互斥）
+    restart_run_id: Optional[str] = None
     # 仅配合 resume_run_id：这些题跳过问答链路，复用存量 prediction 仅重判分（judge fallback 补判）
     rescore_question_ids: Optional[List[str]] = None
 

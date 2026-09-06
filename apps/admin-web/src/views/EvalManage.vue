@@ -580,17 +580,23 @@ const datasetOptions = computed(() => {
 
 const startRunGuarded = async (
   datasetId: string,
-  opts: { resumeRunId?: string; configName?: string; judgeConfigName?: string; successText: string },
+  opts: {
+    resumeRunId?: string
+    restartRunId?: string
+    configName?: string
+    judgeConfigName?: string
+    successText: string
+  },
 ) => {
   evalLoading.value = true
   try {
-    await startRun(
-      datasetId,
-      datasetId === selectedDatasetId.value ? selectedDocIds.value : undefined,
-      opts.resumeRunId,
-      opts.configName,
-      opts.judgeConfigName,
-    )
+    await startRun(datasetId, {
+      docIds: datasetId === selectedDatasetId.value ? selectedDocIds.value : undefined,
+      resumeRunId: opts.resumeRunId,
+      restartRunId: opts.restartRunId,
+      configName: opts.configName,
+      judgeConfigName: opts.judgeConfigName,
+    })
     message.success(opts.successText)
     return true
   } catch (e: any) {
@@ -615,13 +621,30 @@ const onRunCreateConfirm = async (payload: { datasetId: string; configName?: str
   if (ok) runCreateVisible.value = false
 }
 
-/** 置顶 item「重来」：以相同模型/题集重新发起一次全量评测（旧中断记录保留可续） */
+/** 置顶 item「重来」：原地重跑同一条记录（清空旧明细与进度，不新增 item）；
+ * 运行中先优雅停止并等状态落定（stopRun 已保持轮询到终态），再发 restart */
 const onRerunRun = async (run: EvalRun) => {
   const snap = (run.config_snapshot || {}) as { model?: string; judge_config?: string }
+  if (run.status === 'running') {
+    try {
+      await stopRun(run.run_id)
+    } catch {
+      /* 已结束/已中断：直接进原地重启 */
+    }
+    for (let i = 0; i < 90; i++) {
+      const cur = currentRun.value
+      if (cur && cur.run_id === run.run_id && cur.status === 'running') {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        continue
+      }
+      break
+    }
+  }
   await startRunGuarded(run.dataset_id, {
+    restartRunId: run.run_id,
     configName: snap.model,
     judgeConfigName: snap.judge_config,
-    successText: '已重新发起评测',
+    successText: '评测已重新开始',
   })
 }
 

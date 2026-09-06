@@ -211,8 +211,12 @@ async def start_run(req: StartEvalRunRequest):
         loop = asyncio.get_event_loop()
         run_data = await loop.run_in_executor(
             None,
-            suite_runner.start_eval_run,
-            req.dataset_id, req.question_id, req.save, req.doc_ids, req.resume_run_id, req.config_name, req.rescore_question_ids, req.judge_config_name,
+            lambda: suite_runner.start_eval_run(
+                dataset_id=req.dataset_id, question_id=req.question_id, save=req.save,
+                override_doc_ids=req.doc_ids, resume_run_id=req.resume_run_id,
+                config_name=req.config_name, rescore_question_ids=req.rescore_question_ids,
+                judge_config_name=req.judge_config_name, restart_run_id=req.restart_run_id,
+            ),
         )
         return run_data
     except ValueError as exc:

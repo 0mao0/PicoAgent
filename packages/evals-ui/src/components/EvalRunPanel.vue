@@ -16,12 +16,10 @@
     >
       <div class="eval-run-panel__item-main">
         <div class="eval-run-panel__item-line1">
-          <span
-            class="eval-run-panel__item-dot"
-            :class="`eval-run-panel__item-dot--${run.status}`"
-          />
           <span class="eval-run-panel__item-model">{{ runModel(run) }}</span>
-          <span class="eval-run-panel__item-seq">#{{ shortSeq(run) }}</span>
+          <span class="eval-run-panel__item-status" :class="`eval-run-panel__item-status--${run.status}`">
+            {{ statusLabel(run) }} {{ run.completed_questions }}/{{ run.total_questions }}
+          </span>
         </div>
         <div class="eval-run-panel__item-line2">
           {{ formatTime(run.started_at) }} · 正确 {{ correctCount(run) }} 题
@@ -30,28 +28,26 @@
       <div class="eval-run-panel__item-side" @click.stop>
         <span class="eval-run-panel__item-score">{{ runScoreText(run) }}</span>
         <div class="eval-run-panel__item-actions">
-          <a-tooltip title="以相同模型重新发起一次全量评测">
-            <a-button type="text" size="small" @click="emit('rerun', run)">
+          <a-tooltip title="重来：清空进度原地重跑全部题目">
+            <a-button type="text" class="eval-run-panel__item-icon-btn" @click="emit('rerun', run)">
               <template #icon><RedoOutlined /></template>
-              重来
             </a-button>
           </a-tooltip>
-          <a-tooltip v-if="run.status === 'running'" title="优雅停止：完成当前题目后中断，保留已完成结果">
-            <a-button type="text" size="small" @click="emit('stop')">
+          <a-tooltip v-if="run.status === 'running'" title="暂停：完成当前题目后中断，保留已完成结果">
+            <a-button type="text" class="eval-run-panel__item-icon-btn" @click="emit('stop')">
               <template #icon><PauseCircleOutlined /></template>
-              暂停
             </a-button>
           </a-tooltip>
-          <a-tooltip v-else title="断点续跑：复用已完成题目，只跑剩余">
-            <a-button type="text" size="small" @click="emit('resume', run)">
+          <a-tooltip v-else title="继续：断点续跑，只跑剩余题目">
+            <a-button type="text" class="eval-run-panel__item-icon-btn" @click="emit('resume', run)">
               <template #icon><PlayCircleOutlined /></template>
-              继续
             </a-button>
           </a-tooltip>
-          <a-button type="text" size="small" danger @click="emit('delete-run', run.run_id)">
-            <template #icon><DeleteOutlined /></template>
-            删除
-          </a-button>
+          <a-tooltip title="删除">
+            <a-button type="text" danger class="eval-run-panel__item-icon-btn" @click="emit('delete-run', run.run_id)">
+              <template #icon><DeleteOutlined /></template>
+            </a-button>
+          </a-tooltip>
         </div>
       </div>
     </div>
@@ -120,7 +116,7 @@
           <div class="eval-run-panel__item-main">
             <div class="eval-run-panel__item-line1">
               <span class="eval-run-panel__item-model">{{ runModel(run) }}</span>
-              <span class="eval-run-panel__item-seq">#{{ shortSeq(run) }}</span>
+              <span class="eval-run-panel__item-status eval-run-panel__item-status--completed">已完成</span>
             </div>
             <div class="eval-run-panel__item-line2">
               {{ formatTime(run.completed_at || run.started_at) }} · 正确
@@ -129,15 +125,16 @@
           </div>
           <div class="eval-run-panel__item-side" @click.stop>
             <span class="eval-run-panel__item-score">{{ formatScore(run.summary_scores) }}</span>
-            <a-button
-              type="text"
-              size="small"
-              danger
-              class="eval-run-panel__item-delete"
-              @click="onDeleteClick(run.run_id)"
-            >
-              <template #icon><DeleteOutlined /></template>
-            </a-button>
+            <a-tooltip title="删除">
+              <a-button
+                type="text"
+                danger
+                class="eval-run-panel__item-icon-btn"
+                @click="onDeleteClick(run.run_id)"
+              >
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </a-tooltip>
           </div>
         </div>
       </div>
@@ -349,15 +346,17 @@ const runModel = (run: EvalRun): string => {
   return snap?.model || String(run.run_name || '').split('_')[0] || '默认模型'
 }
 
-/** 简化测试编号：run_name 的 {model}_{MMDD-HHmm} 时间后缀，兜底 run_id 尾 6 位 */
-const shortSeq = (run: EvalRun): string => {
-  const name = String(run.run_name || '')
-  const model = runModel(run)
-  if (name && name.startsWith(`${model}_`)) return name.slice(model.length + 1)
-  const underscore = name.lastIndexOf('_')
-  if (underscore >= 0) return name.slice(underscore + 1)
-  return String(run.run_id || '').replace(/^run[-_]?/, '').slice(-8)
+/** 简化测试编号：run_id 十六进制前 6 位（对比表列头等场景；标题行已不展示编号） */
+const shortSeq = (run: EvalRun): string =>
+  String(run.run_id || '').replace(/^run[-_]?/, '').slice(0, 6)
+
+const statusLabels: Record<string, string> = {
+  running: '评测中',
+  cancelled: '已中断',
+  failed: '失败',
+  completed: '已完成',
 }
+const statusLabel = (run: EvalRun): string => statusLabels[run.status] || run.status
 
 const correctCount = (run: EvalRun): number | string => {
   if (run.run_id === runningRun.value?.run_id) return liveSummary.value.correct
@@ -574,7 +573,7 @@ const compareRows = computed(() =>
       min-width: 0;
     }
 
-    /* 第一行：模型 + 编号（正常强调） */
+    /* 第一行：模型 + 状态标签（nowrap 防窄栏把内容折成竖排） */
     &-line1 {
       display: flex;
       align-items: center;
@@ -582,50 +581,56 @@ const compareRows = computed(() =>
       font-size: 12px;
       color: var(--text-primary);
       min-width: 0;
+      white-space: nowrap;
     }
 
-    /* 第二行：时间 + 正确题数（弱化色） */
+    /* 第二行：时间 + 正确题数（弱化色；nowrap 防时间被拆成多行竖排） */
     &-line2 {
       margin-top: 2px;
       font-size: 11px;
       color: var(--text-tertiary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     &-model {
+      flex: 1 1 auto;
+      min-width: 0;
       font-weight: 600;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    &-seq {
+    /* 状态一眼可见：评测中带进度计数（此前用户误以为“没进展”的直接修复） */
+    &-status {
       flex-shrink: 0;
       font-size: 11px;
-      color: var(--text-secondary);
+      line-height: 18px;
+      padding: 0 7px;
+      border-radius: 9px;
       font-variant-numeric: tabular-nums;
-    }
-
-    &-dot {
-      flex-shrink: 0;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
 
       &--running {
-        background: #1677ff;
-        animation: eval-run-panel-pulse 1.2s ease-in-out infinite;
+        color: #1677ff;
+        background: fade(#1677ff, 10%);
+        animation: eval-run-panel-pulse 1.6s ease-in-out infinite;
       }
 
       &--completed {
-        background: #52c41a;
+        color: #389e0d;
+        background: fade(#52c41a, 10%);
       }
 
       &--cancelled {
-        background: #faad14;
+        color: #d48806;
+        background: fade(#faad14, 12%);
       }
 
       &--failed {
-        background: #f5222d;
+        color: #f5222d;
+        background: fade(#f5222d, 8%);
       }
     }
 
@@ -646,16 +651,21 @@ const compareRows = computed(() =>
     &-actions {
       display: flex;
       align-items: center;
-
-      :deep(.ant-btn) {
-        padding: 0 5px;
-        font-size: 11px;
-      }
+      gap: 2px;
     }
 
-    &-delete {
-      padding: 0 4px;
-      font-size: 11px;
+    /* 纯图标操作按钮，图标放大一档更好点 */
+    &-icon-btn {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+
+      :deep(.anticon) {
+        font-size: 16px;
+      }
     }
 
     &-check {

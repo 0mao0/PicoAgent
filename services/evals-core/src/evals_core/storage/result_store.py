@@ -588,6 +588,20 @@ def reset_run_for_resume(run_id: str, config_snapshot: Dict[str, Any]) -> None:
     conn.commit()
 
 
+def restart_run_for_retry(run_id: str, config_snapshot: Dict[str, Any]) -> None:
+    """「重来」原地重跑：清空该 run 的旧明细与进度、刷新开始时间，复用同一条记录，
+    不新增 item（区别于 resume——后者保留已完成题目续跑）。"""
+    now = datetime.now().isoformat()
+    conn = _get_conn()
+    conn.execute("DELETE FROM eval_run_detail WHERE run_id = ?", (run_id,))
+    conn.execute(
+        "UPDATE eval_run SET status = 'running', completed_at = NULL, summary_scores = NULL, "
+        "completed_questions = 0, started_at = ?, config_snapshot = ?, owner_pid = ? WHERE run_id = ?",
+        (now, json.dumps(config_snapshot, ensure_ascii=False), os.getpid(), run_id),
+    )
+    conn.commit()
+
+
 def fail_run(run_id: str, error: str) -> None:
     """标记运行失败。"""
     now = datetime.now().isoformat()

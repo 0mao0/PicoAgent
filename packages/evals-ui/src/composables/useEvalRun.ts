@@ -64,22 +64,27 @@ export function useEvalRun() {
   const pendingDetails = new Map<string, Promise<EvalRunDetail[]>>()
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
-  /** 启动整体评测。judgeConfigName=新增评测弹框选定的评价模型（判分候选链首位） */
+  /** 启动整体评测。judgeConfigName=新增评测弹框选定的评价模型（判分候选链首位）；
+   * restartRunId=「重来」原地重跑（复用同一 run 记录，不新增 item） */
   const startRun = async (
     datasetId: string,
-    docIds?: string[],
-    resumeRunId?: string,
-    configName?: string,
-    judgeConfigName?: string,
+    options?: {
+      docIds?: string[]
+      resumeRunId?: string
+      restartRunId?: string
+      configName?: string
+      judgeConfigName?: string
+    },
   ) => {
     loading.value = true
     isFullRun.value = true
     try {
       const body: Record<string, any> = { dataset_id: datasetId }
-      if (docIds && docIds.length > 0) body.doc_ids = docIds
-      if (resumeRunId) body.resume_run_id = resumeRunId
-      if (configName) body.config_name = configName
-      if (judgeConfigName) body.judge_config_name = judgeConfigName
+      if (options?.docIds && options.docIds.length > 0) body.doc_ids = options.docIds
+      if (options?.resumeRunId) body.resume_run_id = options.resumeRunId
+      if (options?.restartRunId) body.restart_run_id = options.restartRunId
+      if (options?.configName) body.config_name = options.configName
+      if (options?.judgeConfigName) body.judge_config_name = options.judgeConfigName
       const resp = await fetch('/api/evals/runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

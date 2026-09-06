@@ -713,7 +713,7 @@ def start_eval_run(
     dataset_id: str, question_id: Optional[str] = None, save: bool = True,
     override_doc_ids: Optional[List[str]] = None, resume_run_id: Optional[str] = None,
     config_name: Optional[str] = None, rescore_question_ids: Optional[List[str]] = None,
-    judge_config_name: Optional[str] = None,
+    judge_config_name: Optional[str] = None, restart_run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """启动评测运行（异步线程），立即返回 run_id，前端轮询获取进度。
 
@@ -723,12 +723,17 @@ def start_eval_run(
     resume_run_id 非空时进行断点续跑：复用该 run 中已完成的题目结果，
     只执行剩余题目，最后合并为一份完整 run。
 
+    restart_run_id 非空时原地重来（UI「重来」按钮）：清空该 run 旧明细与进度、
+    复用同一条记录重跑全部题目，不再新增 item。与 resume_run_id 互斥。
+
     rescore_question_ids（仅配合 resume_run_id）：这些题从 pre_done 排除、不走问答链路，
     直接复用该 run 存量 prediction 重新判分——judge 断连 fallback 题的无抖动补判通道。
     存量行没有可用 prediction 的题自动降级为整题重跑。
     """
     if rescore_question_ids and not resume_run_id:
         raise ValueError("rescore_question_ids 仅在 resume_run_id 续跑时有意义")
+    if restart_run_id and resume_run_id:
+        raise ValueError("restart_run_id 与 resume_run_id 互斥（重来=全量重跑，续跑=复用已完成）")
     if _current_run_id is not None:
         running = result_store.get_run(_current_run_id) or {}
         running_ds = running.get("dataset_id") or "其他测试集"
@@ -750,6 +755,27 @@ def start_eval_run(
     pre_done: Dict[str, Dict[str, Any]] = {}
     rescore_map: Dict[str, Dict[str, Any]] = {}
     in_place_resume = False
+
+    if restart_run_id:
+        source_run = result_store.get_run(restart_run_id)
+        if not source_run:
+            raise ValueError(f"重来目标 run 不存在: {restart_run_id}")
+        if source_run.get("dataset_id") != dataset_id:
+            raise ValueError("重来目标 run 与目标测试集不一致")
+        if question_id:
+            raise ValueError("重来仅支持整体评测")
+        # 原地重来：清空旧明细/进度、复用同一条记录，重跑全部题目
+        result_store.restart_run_for_retry(restart_run_id, _manifest_with_judge(config_name, judge_config_name))
+        run_id = restart_run_id
+        run_name = source_run.get("run_name") or _generate_run_name(config_name)
+        thread = threading.Thread(
+            target=_run_suite_thread,
+            args=(run_id, dataset_id, questions, override_doc_ids, {}, False,
+                  config_name, None, judge_config_name),
+            daemon=True,
+        )
+        thread.start()
+        return result_store.get_run(run_id) or {"run_id": run_id, "status": "running"}
 
     if resume_run_id:
         source_run = result_store.get_run(resume_run_id)
