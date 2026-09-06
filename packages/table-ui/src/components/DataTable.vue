@@ -2,9 +2,11 @@
   <div
     ref="tableContainerRef"
     class="data-table"
+    :class="{ 'data-table--row-click-expand': expandRowByClick && hasExpandSlot }"
     :style="tableStyle"
   >
-    <div v-if="hasToolbar" class="data-table-toolbar">
+    <!-- 槽位存在性不具响应性：数据异步加载后才出现的 toolbar 插槽若走 computed 会被永久缓存为 false，必须模板内直接判 -->
+    <div v-if="filters.length > 0 || $slots.toolbar || $slots.toolbarExtra" class="data-table-toolbar">
       <slot v-if="$slots.toolbar" name="toolbar" />
       <div v-else class="data-table-filter-bar">
         <template v-for="f in filters" :key="f.key">
@@ -71,12 +73,18 @@
         :locale="{ emptyText }"
         :expandable="expandable"
         :row-selection="rowSelection"
+        :expand-row-by-click="expandRowByClick"
+        :expand-column-width="hasExpandSlot ? EXPAND_COL_W : undefined"
         size="small"
         @resize-column="handleResizeColumn"
         @change="onTableChange"
+        @expand="handleTableExpand"
       >
         <template #bodyCell="scope">
           <slot name="bodyCell" v-bind="scope" />
+        </template>
+        <template v-if="$slots.headerCell" #headerCell="scope">
+          <slot name="headerCell" v-bind="scope" />
         </template>
         <template v-if="$slots.expandedRowRender" #expandedRowRender="scope">
           <slot name="expandedRowRender" v-bind="scope" />
@@ -100,12 +108,18 @@
         :locale="{ emptyText }"
         :expandable="expandable"
         :row-selection="rowSelection"
+        :expand-row-by-click="expandRowByClick"
+        :expand-column-width="hasExpandSlot ? EXPAND_COL_W : undefined"
         size="small"
         @resize-column="handleResizeColumn"
         @change="onTableChange"
+        @expand="handleTableExpand"
       >
         <template #bodyCell="scope">
           <slot name="bodyCell" v-bind="scope" />
+        </template>
+        <template v-if="$slots.headerCell" #headerCell="scope">
+          <slot name="headerCell" v-bind="scope" />
         </template>
         <template v-if="$slots.expandedRowRender" #expandedRowRender="scope">
           <slot name="expandedRowRender" v-bind="scope" />
@@ -157,6 +171,8 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   pagination?: Record<string, any> | boolean
   expandable?: Record<string, any>
+  /** 整行点击展开（配合 #expandedRowRender 使用，透传 antd expandRowByClick） */
+  expandRowByClick?: boolean
   rowSelection?: Record<string, any>
   filters?: DataTableFilter[]
   query?: Record<string, any>
@@ -174,12 +190,23 @@ const props = withDefaults(defineProps<{
   fillWidth: true,
   emptyText: '暂无数据',
   storageKey: '',
+  expandRowByClick: false,
 })
 
 const emit = defineEmits<{
   'update:query': [q: Record<string, any>]
   'change': [pagination: unknown, filters: unknown, sorter: unknown]
+  'expand': [expanded: boolean, record: Record<string, any>]
 }>()
+
+/** 展开图标列宽度：a-table 注入列无宽度，与强制表宽机制（--dt-col-sum）配合需显式定宽 */
+const EXPAND_COL_W = 40
+
+const hasExpandSlot = computed(() => !!useSlots().expandedRowRender)
+
+function handleTableExpand(expanded: boolean, record: Record<string, any>): void {
+  emit('expand', expanded, record)
+}
 
 // ── 列宽拖拽（localStorage 持久化）────────────────────────────
 const STORAGE_PREFIX = 'angineer-datatable-cols:'
@@ -283,7 +310,9 @@ function viewportWidth(): number {
 }
 
 const contentWidth = computed(() =>
-  effectiveColumns.value.reduce((sum, col) => sum + (typeof col.width === 'number' ? col.width : 0), 0),
+  effectiveColumns.value.reduce((sum, col) => sum + (typeof col.width === 'number' ? col.width : 0), 0)
+  // 展开图标列由 a-table 注入、不在 columns 内，强制表宽必须把它算进来，否则会被 fixed 布局挤到 0
+  + (hasExpandSlot.value ? EXPAND_COL_W : 0),
 )
 /** 表宽精确等于列宽总和：窄表不被浏览器等比拉伸、宽表保持溢出滚动，同时列宽严格遵循配置/拖拽结果 */
 const tableStyle = computed(() => ({ '--dt-col-sum': `${contentWidth.value}px` }))
@@ -358,10 +387,6 @@ function onTableChange(pagination: unknown, filters: unknown, sorter: unknown): 
 }
 
 // ── 筛选栏：配置驱动，v-model:query ──
-const hasToolbar = computed(() =>
-  props.filters.length > 0 || !!(useSlots().toolbar || useSlots().toolbarExtra),
-)
-
 const localQuery = reactive<Record<string, any>>({})
 
 watch(() => props.query, (q) => {
@@ -438,6 +463,11 @@ function emitQuery(): void {
 // 表头居中
 .data-table__table :deep(th) {
   text-align: center;
+}
+
+// 整行热区展开：行级指针光标提示可点击
+.data-table--row-click-expand :deep(.ant-table-row) {
+  cursor: pointer;
 }
 
 </style>
