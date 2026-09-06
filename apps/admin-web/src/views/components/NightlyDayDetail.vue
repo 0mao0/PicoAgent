@@ -1,5 +1,5 @@
 <template>
-  <!-- 夜间维护单日明细：总览（矩阵图+分行结论）+ 三个折叠条（回退题/新修复题/评测报告） -->
+  <!-- 夜间维护单日明细：总览（矩阵图+分行结论）+ 三个折叠条（回退题/修复题/评测报告），对比口径=固化基线 -->
   <div class="ndd">
     <div class="ndd-overview">
       <div class="ndd-overview__left">
@@ -35,7 +35,7 @@
     </div>
 
     <a-collapse class="ndd-collapses">
-      <a-collapse-panel key="regressions" :header="`回退题目（昨晚答对 → 今晚答错，${regressions.length} 题）`">
+      <a-collapse-panel key="regressions" :header="`回退题目（基线答对 → 今晚答错，${regressions.length} 题）`">
         <a-empty
           v-if="!regressions.length"
           :image="Empty.PRESENTED_IMAGE_SIMPLE"
@@ -49,7 +49,7 @@
             <a-tooltip :title="item.question || undefined">
               <p class="ndd-qitem__q">{{ item.question || `题目 ${item.qid.slice(0, 8)}` }}</p>
             </a-tooltip>
-            <a-tooltip title="昨晚答对，今晚答错">
+            <a-tooltip title="基线答对，今晚答错">
               <span class="ndd-qitem__mark ndd-qitem__mark--down">✓→✗</span>
             </a-tooltip>
           </li>
@@ -63,7 +63,7 @@
             <a-tooltip :title="item.question || undefined">
               <p class="ndd-qitem__q">{{ item.question || `题目 ${item.qid.slice(0, 8)}` }}</p>
             </a-tooltip>
-            <a-tooltip title="昨晚答错，今晚答对">
+            <a-tooltip title="基线答错，今晚答对">
               <span class="ndd-qitem__mark ndd-qitem__mark--up">✗→✓</span>
             </a-tooltip>
           </li>
@@ -161,7 +161,7 @@ const analysisLines = computed<string[]>(() => {
   const lines = [`今晚答对 ${pct(day.overall_score)}，比基线${baseRef}${dir} ${(Math.abs(day.delta ?? 0) * 100).toFixed(2)} 个百分点。`]
   const m = day.matrix || {}
   if (m.pf != null || m.fp != null) {
-    lines.push(`答对变答错 ${m.fp ?? '—'} 题，答错变答对 ${m.pf ?? '—'} 题。`)
+    lines.push(`相对基线：答对变答错 ${m.fp ?? '—'} 题，答错变答对 ${m.pf ?? '—'} 题。`)
   }
   lines.push(day.state === 'red'
     ? '整体明显变差，需要排查下方回退题目。'
@@ -184,8 +184,8 @@ const reportHtml = computed(() => renderMarkdownToHtml(props.detail?.report_md |
 const fixedHeader = computed(() => {
   const total = matrixPf.value ?? fixed.value.length
   return fixed.value.length < total
-    ? `新修复题目（昨晚答错 → 今晚答对，共 ${total} 题，展示 ${fixed.value.length} 题）`
-    : `新修复题目（昨晚答错 → 今晚答对，${total} 题）`
+    ? `修复题目（基线答错 → 今晚答对，共 ${total} 题，展示 ${fixed.value.length} 题）`
+    : `修复题目（基线答错 → 今晚答对，${total} 题）`
 })
 
 // ── 过渡矩阵横向柱状图（echarts，沿用 ApiKeyChart 的全量 import 惯例）──
@@ -197,10 +197,10 @@ function renderChart(): void {
   if (!chart) chart = echarts.init(matrixChartEl.value)
   const m = cur.value.matrix || {}
   const rows: Array<{ name: string; value: number; color: string }> = [
-    { name: '两晚都答对', value: m.pp ?? 0, color: '#bfbfbf' },
-    { name: '今晚修复', value: m.pf ?? 0, color: '#52c41a' },
-    { name: '今晚回退', value: m.fp ?? 0, color: '#ff4d4f' },
-    { name: '两晚都答错', value: m.ff ?? 0, color: '#8c8c8c' },
+    { name: '都答对', value: m.pp ?? 0, color: '#bfbfbf' },
+    { name: '修复（基线错→对）', value: m.pf ?? 0, color: '#52c41a' },
+    { name: '回退（基线对→错）', value: m.fp ?? 0, color: '#ff4d4f' },
+    { name: '都答错', value: m.ff ?? 0, color: '#8c8c8c' },
   ]
   chart.setOption({
     tooltip: { trigger: 'item', formatter: '{b}：{c} 题' },
