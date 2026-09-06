@@ -1,309 +1,316 @@
 <template>
   <div class="eval-run-panel">
-    <div class="eval-run-panel__actions">
-      <a-select
-        v-if="!isRunning && models.length"
-        v-model:value="selectedModel"
-        size="small"
-        class="eval-run-panel__model-select"
-        :options="modelOptions"
-      />
-      <a-button
-        v-if="isRunning"
-        type="primary"
-        danger
-        :loading="stopping"
-        :disabled="stopping"
-        block
-        @click="handleClick"
-      >
-        {{ stopping ? '正在停止...' : '停止评测' }}
-      </a-button>
-      <div v-else-if="canResume" class="eval-run-panel__action-row">
-        <a-button
-          type="primary"
-          :loading="loading"
-          :disabled="!datasetId || loading"
-          @click="handleClick"
-        >
-          {{ primaryLabel }}
-        </a-button>
-        <a-button
-          class="eval-run-panel__resume-btn"
-          :loading="loading"
-          :disabled="!datasetId || loading"
-          @click="onResumeClick"
-        >
-          <template #icon><PlayCircleOutlined /></template>
-          继续评测
-        </a-button>
+    <!-- A：新增评测（唯一发起入口，模型/题集在弹框里选） -->
+    <a-button type="primary" block class="eval-run-panel__create" @click="emit('create-run')">
+      <template #icon><PlusOutlined /></template>
+      新增评测
+    </a-button>
+
+    <!-- B：进行中的评测 item（运行中 + 最近一次中断未完成；未完成的进历史记录，置顶展示） -->
+    <div
+      v-for="run in activeRuns"
+      :key="run.run_id"
+      class="eval-run-panel__item eval-run-panel__item--active"
+      :class="{ 'eval-run-panel__item--selected': run.run_id === selectedRunId }"
+      @click="onSelectRun(run.run_id)"
+    >
+      <div class="eval-run-panel__item-main">
+        <div class="eval-run-panel__item-line1">
+          <span
+            class="eval-run-panel__item-dot"
+            :class="`eval-run-panel__item-dot--${run.status}`"
+          />
+          <span class="eval-run-panel__item-model">{{ runModel(run) }}</span>
+          <span class="eval-run-panel__item-seq">#{{ shortSeq(run) }}</span>
+        </div>
+        <div class="eval-run-panel__item-line2">
+          {{ formatTime(run.started_at) }} · 正确 {{ correctCount(run) }} 题
+        </div>
       </div>
-      <a-button
-        v-else
-        type="primary"
-        :loading="loading"
-        :disabled="!datasetId || loading"
-        block
-        @click="handleClick"
-      >
-        整体评测
-      </a-button>
+      <div class="eval-run-panel__item-side" @click.stop>
+        <span class="eval-run-panel__item-score">{{ runScoreText(run) }}</span>
+        <div class="eval-run-panel__item-actions">
+          <a-tooltip title="以相同模型重新发起一次全量评测">
+            <a-button type="text" size="small" @click="emit('rerun', run)">
+              <template #icon><RedoOutlined /></template>
+              重来
+            </a-button>
+          </a-tooltip>
+          <a-tooltip v-if="run.status === 'running'" title="优雅停止：完成当前题目后中断，保留已完成结果">
+            <a-button type="text" size="small" @click="emit('stop')">
+              <template #icon><PauseCircleOutlined /></template>
+              暂停
+            </a-button>
+          </a-tooltip>
+          <a-tooltip v-else title="断点续跑：复用已完成题目，只跑剩余">
+            <a-button type="text" size="small" @click="emit('resume', run)">
+              <template #icon><PlayCircleOutlined /></template>
+              继续
+            </a-button>
+          </a-tooltip>
+          <a-button type="text" size="small" danger @click="emit('delete-run', run.run_id)">
+            <template #icon><DeleteOutlined /></template>
+            删除
+          </a-button>
+        </div>
+      </div>
     </div>
 
-    <div class="eval-run-panel__body">
-      <!-- B：准确率（运行中显示实时值） -->
-      <div v-if="summary" class="eval-run-panel__accuracy">
-        <div class="eval-run-panel__accuracy-head">
-          <span class="eval-run-panel__accuracy-label">
-            {{ isRunning ? '实时正确率' : '整体正确率' }}
-          </span>
-          <span v-if="lastRunTime" class="eval-run-panel__accuracy-time">{{ lastRunTime }}</span>
-          <a-tag v-if="scoreStatusLabel" :color="scoreTagColor" class="eval-run-panel__accuracy-tag">
-            {{ scoreStatusLabel }}
-          </a-tag>
+    <!-- C：运行中 item 的实时统计 -->
+    <div v-if="runningRun" class="eval-run-panel__accuracy">
+      <div class="eval-run-panel__accuracy-head">
+        <span class="eval-run-panel__accuracy-label">实时正确率</span>
+        <span class="eval-run-panel__accuracy-progress">
+          {{ runningRun.completed_questions }}/{{ runningRun.total_questions }} 题
+        </span>
+      </div>
+      <div class="eval-run-panel__accuracy-body">
+        <div class="eval-run-panel__accuracy-left">
+          <a-progress
+            type="dashboard"
+            :percent="accuracyPercent"
+            stroke-color="#1677ff"
+            :width="104"
+            :format="() => `${scoreNumber}%`"
+          />
         </div>
-        <div class="eval-run-panel__accuracy-body">
-          <div class="eval-run-panel__accuracy-left">
-            <a-progress
-              type="dashboard"
-              :percent="accuracyPercent"
-              :stroke-color="accuracyColor"
-              :width="104"
-              :format="() => `${scoreNumber}%`"
-            />
+        <div class="eval-run-panel__accuracy-right">
+          <div class="eval-run-panel__stat">
+            <span class="eval-run-panel__stat-label">正确</span>
+            <span class="eval-run-panel__stat-value eval-run-panel__stat-value--ok">{{ liveSummary.correct }}</span>
           </div>
-          <div class="eval-run-panel__accuracy-right">
-            <div class="eval-run-panel__stat">
-              <span class="eval-run-panel__stat-label">正确</span>
-              <span class="eval-run-panel__stat-value eval-run-panel__stat-value--ok">
-                {{ summary.correct ?? 0 }}
-              </span>
-            </div>
-            <div class="eval-run-panel__stat">
-              <span class="eval-run-panel__stat-label">错误</span>
-              <span class="eval-run-panel__stat-value eval-run-panel__stat-value--bad">
-                {{ summary.wrong ?? 0 }}
-              </span>
-            </div>
-            <div class="eval-run-panel__stat">
-              <span class="eval-run-panel__stat-label">跳过</span>
-              <span class="eval-run-panel__stat-value">
-                {{ summary.skipped ?? 0 }}
-              </span>
-            </div>
+          <div class="eval-run-panel__stat">
+            <span class="eval-run-panel__stat-label">错误</span>
+            <span class="eval-run-panel__stat-value eval-run-panel__stat-value--bad">{{ liveSummary.wrong }}</span>
+          </div>
+          <div class="eval-run-panel__stat">
+            <span class="eval-run-panel__stat-label">异常</span>
+            <span class="eval-run-panel__stat-value">{{ liveSummary.errored }}</span>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- C：历史记录（列表 + 勾选对比） -->
-      <div v-if="historyRuns.length" class="eval-run-panel__history">
-        <div class="eval-run-panel__section-head">
-          <span class="eval-run-panel__section-title">历史记录</span>
-          <span v-if="compareIds.length >= 2" class="eval-run-panel__compare-badge">
-            对比 {{ compareIds.length }}/3
-          </span>
-        </div>
-        <div class="eval-run-panel__history-list">
-          <div
-            v-for="run in historyRuns"
-            :key="run.run_id"
-            class="eval-run-panel__history-row"
-            :class="{
-              'eval-run-panel__history-row--active': run.run_id === selectedRunId,
-              'eval-run-panel__history-row--compared': compareIds.includes(run.run_id),
-            }"
-            @click="onSelectRun(run.run_id)"
-          >
-            <a-checkbox
-              :checked="compareIds.includes(run.run_id)"
-              :disabled="!compareIds.includes(run.run_id) && compareIds.length >= 3"
-              class="eval-run-panel__history-check"
-              @click.stop
-              @change="onToggleCompare(run.run_id, $event.target.checked)"
-            />
-            <span class="eval-run-panel__history-dot" :class="`eval-run-panel__history-dot--${run.status}`" />
-            <div class="eval-run-panel__history-main">
-              <div class="eval-run-panel__history-name">
-                {{ run.run_name || run.run_id.slice(0, 12) }}
-              </div>
-              <div class="eval-run-panel__history-sub">
-                {{ runStatusLabel(run.status) }} · {{ run.completed_questions }}/{{ run.total_questions }}
-                <template v-if="run.completed_at || run.started_at">
-                  · {{ formatTime(run.completed_at || run.started_at) }}
-                </template>
-              </div>
+    <!-- D：历史记录（仅已完成的评测） -->
+    <div v-if="historyRuns.length" class="eval-run-panel__history">
+      <div class="eval-run-panel__section-head">
+        <span class="eval-run-panel__section-title">历史记录</span>
+        <span v-if="compareIds.length >= 2" class="eval-run-panel__compare-badge">
+          对比 {{ compareIds.length }}/3
+        </span>
+      </div>
+      <div class="eval-run-panel__history-list">
+        <div
+          v-for="run in historyRuns"
+          :key="run.run_id"
+          class="eval-run-panel__item"
+          :class="{
+            'eval-run-panel__item--selected': run.run_id === selectedRunId,
+            'eval-run-panel__item--compared': compareIds.includes(run.run_id),
+          }"
+          @click="onSelectRun(run.run_id)"
+        >
+          <a-checkbox
+            :checked="compareIds.includes(run.run_id)"
+            :disabled="!compareIds.includes(run.run_id) && compareIds.length >= 3"
+            class="eval-run-panel__item-check"
+            @click.stop
+            @change="onToggleCompare(run.run_id, ($event.target as HTMLInputElement).checked)"
+          />
+          <div class="eval-run-panel__item-main">
+            <div class="eval-run-panel__item-line1">
+              <span class="eval-run-panel__item-model">{{ runModel(run) }}</span>
+              <span class="eval-run-panel__item-seq">#{{ shortSeq(run) }}</span>
             </div>
-            <span class="eval-run-panel__history-score">{{ formatScore(run.summary_scores) }}</span>
+            <div class="eval-run-panel__item-line2">
+              {{ formatTime(run.completed_at || run.started_at) }} · 正确
+              {{ run.summary_scores?.correct ?? '—' }}/{{ run.summary_scores?.total ?? run.total_questions }} 题
+            </div>
+          </div>
+          <div class="eval-run-panel__item-side" @click.stop>
+            <span class="eval-run-panel__item-score">{{ formatScore(run.summary_scores) }}</span>
             <a-button
               type="text"
               size="small"
               danger
-              class="eval-run-panel__history-delete"
-              @click.stop="onDeleteClick(run.run_id)"
+              class="eval-run-panel__item-delete"
+              @click="onDeleteClick(run.run_id)"
             >
-              删除
+              <template #icon><DeleteOutlined /></template>
             </a-button>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- D：题目明细 / 逐题对比 -->
-      <div v-if="historyRuns.length" class="eval-run-panel__detail">
-        <div class="eval-run-panel__section-head">
-          <span class="eval-run-panel__section-title">
-            {{ isCompareMode ? '逐题对比' : '题目明细' }}
-          </span>
-          <div v-if="isCompareMode" class="eval-run-panel__diff-toggle">
-            仅看差异
-            <a-switch v-model:checked="showDiffOnly" size="small" />
-          </div>
+    <a-empty
+      v-if="!activeRuns.length && !historyRuns.length"
+      description="暂无评测记录，点击上方新增评测"
+      :image="false"
+      class="eval-run-panel__empty"
+    />
+
+    <!-- E：题目明细 / 逐题对比 -->
+    <div v-if="historyRuns.length || activeRuns.length" class="eval-run-panel__detail">
+      <div class="eval-run-panel__section-head">
+        <span class="eval-run-panel__section-title">
+          {{ isCompareMode ? '逐题对比' : '题目明细' }}
+        </span>
+        <div v-if="isCompareMode" class="eval-run-panel__diff-toggle">
+          仅看差异
+          <a-switch v-model:checked="showDiffOnly" size="small" />
         </div>
-
-        <template v-if="isCompareMode">
-          <div class="eval-run-panel__compare-wrap">
-            <table class="eval-run-panel__compare-table">
-              <thead>
-                <tr>
-                  <th class="eval-run-panel__compare-seq">#</th>
-                  <th>题目</th>
-                  <th v-for="run in compareRuns" :key="run.run_id" class="eval-run-panel__compare-run">
-                    {{ shortName(run) }}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="row in compareRows"
-                  :key="row.seq"
-                  :class="{ 'eval-run-panel__compare-row--diff': row.hasDiff }"
-                >
-                  <td class="eval-run-panel__compare-seq">{{ row.seq }}</td>
-                  <td class="eval-run-panel__compare-question" :title="row.question">
-                    {{ row.question || '—' }}
-                  </td>
-                  <td
-                    v-for="cell in row.cells"
-                    :key="cell.runId"
-                    class="eval-run-panel__compare-cell"
-                    :class="cell.className"
-                  >
-                    {{ cell.mark }}
-                  </td>
-                </tr>
-                <tr v-if="!compareRows.length">
-                  <td :colspan="compareRuns.length + 2" class="eval-run-panel__compare-empty">
-                    {{ showDiffOnly ? '所选记录逐题结果一致，无差异' : '所选记录暂无题目结果' }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="eval-run-panel__compare-legend">
-            <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--ok" />正确</span>
-            <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--bad" />错误</span>
-            <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--na" />未测</span>
-            <span class="eval-run-panel__compare-total">差异 {{ diffCount }} 题</span>
-          </div>
-        </template>
-
-        <template v-else>
-          <div v-if="questionRows.length" class="eval-run-panel__chips">
-            <div
-              v-for="row in questionRows"
-              :key="row.seq"
-              class="eval-run-panel__chip"
-              :class="`eval-run-panel__chip--${row.kind}`"
-              :title="`${row.seq}. ${row.question || ''}`"
-            >
-              {{ row.seq }}
-            </div>
-          </div>
-          <div v-else class="eval-run-panel__detail-empty">该记录暂无题目结果</div>
-          <div class="eval-run-panel__chips-legend">
-            <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--ok" />正确</span>
-            <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--bad" />错误</span>
-            <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--na" />未测</span>
-            <span v-if="questionRows.length" class="eval-run-panel__chips-count">
-              共 {{ questionRows.length }} 题
-            </span>
-          </div>
-        </template>
       </div>
 
-      <a-empty
-        v-if="!summary && !historyRuns.length && !isRunning"
-        description="暂无评测记录"
-        :image="false"
-        class="eval-run-panel__empty"
-      />
+      <template v-if="isCompareMode">
+        <div class="eval-run-panel__compare-wrap">
+          <table class="eval-run-panel__compare-table">
+            <thead>
+              <tr>
+                <th class="eval-run-panel__compare-seq">#</th>
+                <th>题目</th>
+                <th v-for="run in compareRuns" :key="run.run_id" class="eval-run-panel__compare-run">
+                  {{ shortSeq(run) }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in compareRows"
+                :key="row.seq"
+                :class="{ 'eval-run-panel__compare-row--diff': row.hasDiff }"
+              >
+                <td class="eval-run-panel__compare-seq">{{ row.seq }}</td>
+                <td class="eval-run-panel__compare-question" :title="row.question">
+                  {{ row.question || '—' }}
+                </td>
+                <td
+                  v-for="cell in row.cells"
+                  :key="cell.runId"
+                  class="eval-run-panel__compare-cell"
+                  :class="cell.className"
+                >
+                  {{ cell.mark }}
+                </td>
+              </tr>
+              <tr v-if="!compareRows.length">
+                <td :colspan="compareRuns.length + 2" class="eval-run-panel__compare-empty">
+                  {{ showDiffOnly ? '所选记录逐题结果一致，无差异' : '所选记录暂无题目结果' }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="eval-run-panel__compare-legend">
+          <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--ok" />正确</span>
+          <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--bad" />错误</span>
+          <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--na" />未测</span>
+          <span class="eval-run-panel__compare-total">差异 {{ diffCount }} 题</span>
+        </div>
+      </template>
+
+      <template v-else>
+        <div v-if="questionRows.length" class="eval-run-panel__chips">
+          <div
+            v-for="row in questionRows"
+            :key="row.seq"
+            class="eval-run-panel__chip"
+            :class="`eval-run-panel__chip--${row.kind}`"
+            :title="`${row.seq}. ${row.question || ''}`"
+          >
+            {{ row.seq }}
+          </div>
+        </div>
+        <div v-else class="eval-run-panel__detail-empty">该记录暂无题目结果</div>
+        <div class="eval-run-panel__chips-legend">
+          <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--ok" />正确</span>
+          <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--bad" />错误</span>
+          <span><i class="eval-run-panel__legend-dot eval-run-panel__legend-dot--na" />未测</span>
+          <span v-if="questionRows.length" class="eval-run-panel__chips-count">
+            共 {{ questionRows.length }} 题
+          </span>
+        </div>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watchEffect, watch } from 'vue'
-import { PlayCircleOutlined } from '@ant-design/icons-vue'
+/**
+ * 评测运行面板（重排后的信息层级）：
+ * 新增评测按钮 → 进行中 item（含中断未完成，重来/暂停-继续/删除）→ 运行中实时统计
+ * → 历史记录 item-list（仅已完成）→ 题目明细/逐题对比。
+ * 发起评测的模型与题集选择全部收敛进「新增评测」弹框（EvalRunCreateModal）。
+ */
+import { computed, ref, watch, watchEffect } from 'vue'
+import {
+  DeleteOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  RedoOutlined,
+} from '@ant-design/icons-vue'
 import type { EvalRun, EvalRunDetail, EvalSummaryScores } from '../types/eval'
 
 const props = defineProps<{
-  datasetId: string
   currentRun: EvalRun | null
-  lastRun: EvalRun | null
-  /** 当前运行是否为整体评测（非单题评测） */
-  isFullRun: boolean
-  /** 上次整体测试时间，格式如 "04-09 18:42" */
-  lastRunTime?: string
-  /** 是否正在加载（如启动中） */
-  loading?: boolean
-  /** 历史整体运行列表（用于下拉选择） */
+  /** 当前测试集的全部整体/单题运行（面板自行按整体评测过滤） */
   runs?: EvalRun[]
   /** 按需加载某次 run 的轻量题目详情 */
   loadRunDetails?: (runId: string) => Promise<EvalRunDetail[]>
 }>()
 
 const emit = defineEmits<{
-  run: [configName?: string]
-  resume: [runId: string, configName?: string]
+  'create-run': []
+  /** 以该 item 的题集+模型重新发起全量评测 */
+  rerun: [run: EvalRun]
+  /** 断点续跑该 item */
+  resume: [run: EvalRun]
   stop: []
   'select-run': [runId: string]
   'delete-run': [runId: string]
 }>()
 
-const stopping = ref(false)
-const models = ref<Array<{ name: string; model: string }>>([])
-const selectedModel = ref<string | undefined>(undefined)
-const modelOptions = computed(() => models.value.map(m => ({ value: m.name, label: m.name })))
-
-/** 拉取可用 LLM 模型配置（默认模型排第一） */
-const loadModels = async () => {
-  try {
-    const resp = await fetch('/api/llm_configs')
-    if (resp.ok) {
-      const list = (await resp.json()) as Array<{ name: string; model: string }>
-      models.value = list || []
-      if (!selectedModel.value && models.value.length) {
-        selectedModel.value = models.value[0].name
-      }
-    }
-  } catch {
-    models.value = []
-  }
-}
-void loadModels()
-const selectedRunId = ref<string | undefined>(undefined)
 const compareIds = ref<string[]>([])
 const detailsByRun = ref<Record<string, EvalRunDetail[]>>({})
 const showDiffOnly = ref(true)
+const selectedRunId = ref<string | undefined>(undefined)
 
-const isRunning = computed(() => {
-  if (props.currentRun?.status === 'running') return true
-  // 兜底：即使 currentRun 未同步，只要运行列表里存在 running 记录也按评测中处理
-  return !!props.runs?.some(r => r.status === 'running')
+const fullRuns = computed(() => (props.runs || []).filter(r => r.is_full_run !== false))
+
+const runningRun = computed(() => {
+  if (props.currentRun?.status === 'running' && props.currentRun.is_full_run !== false) {
+    return props.currentRun
+  }
+  return fullRuns.value.find(r => r.status === 'running') || null
 })
 
-/** 运行中 run 的实况明细：跟随父级轮询（completed_questions 变化）拉取；
- * 运行中的实时统计必须由"本次 run 的真实进度"派生——旧实现回退 lastRun.summary_scores，
- * 新评测 0/25 时半圆会显示上一轮的百分比与对错数（2026-09-06 实踩幽灵数据）。 */
+/** 置顶的未完成 item = 运行中 + 最近一次中断且有可续跑进度的 run（更早的中断记录不刷屏） */
+const activeRuns = computed(() => {
+  const out: EvalRun[] = []
+  if (runningRun.value) out.push(runningRun.value)
+  const resumable = fullRuns.value.find(r =>
+    (r.status === 'cancelled' || r.status === 'failed') &&
+    r.completed_questions > 0 &&
+    r.completed_questions < r.total_questions &&
+    r.run_id !== runningRun.value?.run_id
+  )
+  if (resumable) out.push(resumable)
+  return out
+})
+
+const activeRunIds = computed(() => new Set(activeRuns.value.map(r => r.run_id)))
+
+/** 历史 = 已完成（含跑完全部题但状态记失败的）；未完成的置顶展示不进历史 */
+const historyRuns = computed(() =>
+  fullRuns.value.filter(r =>
+    !activeRunIds.value.has(r.run_id) &&
+    (r.status === 'completed' || r.completed_questions >= r.total_questions)
+  )
+)
+
+/** 运行中 run 的实况明细：跟随父级轮询拉取；实时统计必须由本次 run 真实进度派生，
+ * 不回退上一轮 summary（幽灵数据教训 2026-09-06）。 */
 const runLiveDetails = ref<EvalRunDetail[]>([])
 watch(
   () => [props.currentRun?.run_id, props.currentRun?.completed_questions] as const,
@@ -318,125 +325,44 @@ watch(
   { immediate: true },
 )
 
-/** 当前展示的汇总得分 */
-const summary = computed((): EvalSummaryScores | null => {
-  if (props.isFullRun && props.currentRun?.status === 'running') {
-    let correct = 0, wrong = 0, errored = 0
-    for (const d of runLiveDetails.value) {
-      if (d.status === 'error' || d.error) { errored++; continue }
-      if (d.status !== 'completed') continue
-      if (d.quality === 'correct') correct++
-      else if (d.quality === 'wrong') wrong++
-    }
-    const done = correct + wrong
-    return { overall_score: done ? correct / done : 0, total: done, correct, wrong, skipped: errored, errored }
+const liveSummary = computed(() => {
+  let correct = 0, wrong = 0, errored = 0
+  for (const d of runLiveDetails.value) {
+    if (d.status === 'error' || d.error) { errored++; continue }
+    if (d.status !== 'completed') continue
+    if (d.quality === 'correct') correct++
+    else if (d.quality === 'wrong') wrong++
   }
-  if (props.isFullRun) {
-    return props.currentRun?.summary_scores || props.lastRun?.summary_scores || null
-  }
-  return props.lastRun?.summary_scores || null
+  return { correct, wrong, errored, done: correct + wrong }
 })
 
-/** 得分数字部分：正确数/总数 的百分比，而非 overall_score */
 const scoreNumber = computed(() => {
-  const s = summary.value
-  if (!s) return '—'
-  if (s.total != null && s.total > 0 && s.correct != null) {
-    return ((s.correct / s.total) * 100).toFixed(1)
-  }
-  if (s.overall_score != null) {
-    return (s.overall_score * 100).toFixed(1)
-  }
-  return '—'
+  const { correct, done } = liveSummary.value
+  return done ? ((correct / done) * 100).toFixed(1) : '0'
 })
 
-const accuracyPercent = computed(() => {
-  const n = parseFloat(scoreNumber.value)
-  return Number.isFinite(n) ? n : 0
-})
+const accuracyPercent = computed(() => parseFloat(scoreNumber.value) || 0)
 
-const accuracyColor = computed(() => {
-  if (isRunning.value) return '#1677ff'
-  const n = accuracyPercent.value
-  if (n >= 80) return '#52c41a'
-  if (n >= 50) return '#faad14'
-  return '#f5222d'
-})
-
-const statusLabelMap: Record<string, { label: string; color: string }> = {
-  running: { label: '评测中', color: 'processing' },
-  completed: { label: '已完成', color: 'success' },
-  cancelled: { label: '已中断', color: 'warning' },
-  failed: { label: '失败', color: 'error' },
-}
-
-const runStatusLabel = (status: string) => statusLabelMap[status]?.label || status
-
-/** 当前展示分数的运行状态 */
-const scoreStatusLabel = computed(() => {
-  const run = isRunning.value ? props.currentRun : (props.lastRun || props.currentRun)
-  if (!run) return null
-  return statusLabelMap[run.status]?.label || run.status
-})
-
-const scoreTagColor = computed(() => {
-  const run = isRunning.value ? props.currentRun : (props.lastRun || props.currentRun)
-  if (!run) return 'default'
-  return statusLabelMap[run.status]?.color || 'default'
-})
-
-/** 可断点续跑的最近一次运行：仅当最新一条整体运行是中断/失败且未跑完 */
-const resumableRun = computed(() => {
-  if (!props.runs) return null
-  const fullRuns = props.runs.filter(r => r.is_full_run !== false)
-  if (!fullRuns.length) return null
-  const latest = fullRuns[0]
-  const resumable =
-    (latest.status === 'cancelled' || latest.status === 'failed') &&
-    latest.completed_questions > 0 &&
-    latest.completed_questions < latest.total_questions
-  return resumable ? latest : null
-})
-
-const canResume = computed(() => !isRunning.value && !!resumableRun.value && !!props.datasetId)
-
-/** 运行时用的模型配置名：config_snapshot.model 为准，run_name 前缀兜底（旧 run 无快照） */
-const runConfigName = (run: EvalRun): string => {
+/** 被测模型名：manifest 快照优先，run_name 前缀兜底（旧 run 无快照） */
+const runModel = (run: EvalRun): string => {
   const snap = run.config_snapshot as { model?: string } | null | undefined
-  return snap?.model || String(run.run_name || '').split('_')[0] || ''
+  return snap?.model || String(run.run_name || '').split('_')[0] || '默认模型'
 }
 
-/** 主按钮语义：存在中断 run 且当前选中模型与其相同 → "重新评测"（同模型全量重做）；
- * 切换了模型则语义回到"整体评测"（对新模型做全量评测）。与"继续评测"（断点续跑）互补。 */
-const primaryLabel = computed(() => {
-  const r = resumableRun.value
-  if (r && selectedModel.value && runConfigName(r) === selectedModel.value) return '重新评测'
-  return '整体评测'
-})
-
-const onResumeClick = () => {
-  if (resumableRun.value) {
-    emit('resume', resumableRun.value.run_id, selectedModel.value)
-  }
+/** 简化测试编号：run_name 的 {model}_{MMDD-HHmm} 时间后缀，兜底 run_id 尾 6 位 */
+const shortSeq = (run: EvalRun): string => {
+  const name = String(run.run_name || '')
+  const model = runModel(run)
+  if (name && name.startsWith(`${model}_`)) return name.slice(model.length + 1)
+  const underscore = name.lastIndexOf('_')
+  if (underscore >= 0) return name.slice(underscore + 1)
+  return String(run.run_id || '').replace(/^run[-_]?/, '').slice(-8)
 }
 
-/** 处理按钮点击：根据运行状态触发启动或停止 */
-const handleClick = () => {
-  if (stopping.value) return
-  if (isRunning.value) {
-    stopping.value = true
-    emit('stop')
-    setTimeout(() => { stopping.value = false }, 1000)
-  } else {
-    emit('run', selectedModel.value)
-  }
+const correctCount = (run: EvalRun): number | string => {
+  if (run.run_id === runningRun.value?.run_id) return liveSummary.value.correct
+  return run.summary_scores?.correct ?? '—'
 }
-
-/** 历史整体运行列表（过滤掉单题评测） */
-const historyRuns = computed(() => {
-  if (!props.runs) return []
-  return props.runs.filter(r => r.is_full_run !== false)
-})
 
 const formatScore = (s?: EvalSummaryScores | null): string => {
   if (!s) return '—'
@@ -449,9 +375,15 @@ const formatScore = (s?: EvalSummaryScores | null): string => {
   return '—'
 }
 
-const formatTime = (iso: string): string => {
+const runScoreText = (run: EvalRun): string => {
+  if (run.run_id === runningRun.value?.run_id) return `${scoreNumber.value}%`
+  return formatScore(run.summary_scores)
+}
+
+const formatTime = (iso?: string | null): string => {
+  if (!iso) return '—'
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
+  if (Number.isNaN(d.getTime())) return '—'
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   const hh = String(d.getHours()).padStart(2, '0')
@@ -459,28 +391,28 @@ const formatTime = (iso: string): string => {
   return `${mm}-${dd} ${hh}:${mi}`
 }
 
-/** 按需加载并缓存某次 run 的题目详情 */
+/** 按需加载并缓存某次 run 的题目详情（运行中的不缓存，跟随进度刷新） */
 const ensureDetails = async (runId: string) => {
   if (!props.loadRunDetails) return
-  const run = historyRuns.value.find(r => r.run_id === runId)
-  const isRunningRun = run?.status === 'running'
+  const isRunningRun = runId === runningRun.value?.run_id
   if (!isRunningRun && detailsByRun.value[runId]) return
   const details = await props.loadRunDetails(runId)
   detailsByRun.value = { ...detailsByRun.value, [runId]: details }
 }
 
-/** 默认选中最近一次运行 */
+/** 默认选中：运行中优先，其次最近一条历史，再次置顶的中断 item；
+ * 选中项从“进行中”迁入“历史”（跑完）不打断选中与明细缓存 */
 watchEffect(() => {
-  const list = historyRuns.value
-  if (list.length) {
-    if (!selectedRunId.value || !list.find(r => r.run_id === selectedRunId.value)) {
-      selectedRunId.value = list[0].run_id
-      emit('select-run', list[0].run_id)
-      void ensureDetails(list[0].run_id)
-    }
-  } else {
+  const all = [...activeRuns.value, ...historyRuns.value]
+  if (!all.length) {
     selectedRunId.value = undefined
+    return
   }
+  if (selectedRunId.value && all.some(r => r.run_id === selectedRunId.value)) return
+  const def = runningRun.value || historyRuns.value[0] || activeRuns.value[0]
+  selectedRunId.value = def.run_id
+  emit('select-run', def.run_id)
+  void ensureDetails(def.run_id)
 })
 
 const onSelectRun = (runId: string) => {
@@ -490,7 +422,6 @@ const onSelectRun = (runId: string) => {
   void ensureDetails(runId)
 }
 
-/** 勾选/取消勾选用于对比的记录，最多 3 组 */
 const onToggleCompare = (runId: string, checked: boolean) => {
   if (checked) {
     if (compareIds.value.includes(runId) || compareIds.value.length >= 3) return
@@ -501,7 +432,7 @@ const onToggleCompare = (runId: string, checked: boolean) => {
   void ensureDetails(runId)
 }
 
-/** 运行中的 run 进度变化时刷新详情 */
+/** 运行中 run 进度变化时刷新其明细 */
 watch(
   () => props.currentRun?.completed_questions,
   () => {
@@ -513,20 +444,17 @@ watch(
 
 const onDeleteClick = (runId: string) => {
   emit('delete-run', runId)
-  if (selectedRunId.value === runId) {
-    selectedRunId.value = undefined
-  }
+  if (selectedRunId.value === runId) selectedRunId.value = undefined
   compareIds.value = compareIds.value.filter(id => id !== runId)
 }
 
-/** 单选模式：主记录逐题结果 */
 const primaryDetails = computed(() => {
   if (!selectedRunId.value) return []
   return detailsByRun.value[selectedRunId.value] || []
 })
 
-const questionRows = computed(() => {
-  return primaryDetails.value.map((d, idx) => {
+const questionRows = computed(() =>
+  primaryDetails.value.map((d, idx) => {
     let kind = 'na'
     if (d.status === 'completed') {
       if (d.quality === 'correct') kind = 'ok'
@@ -536,27 +464,18 @@ const questionRows = computed(() => {
     } else if (d.status === 'running') {
       kind = 'running'
     }
-    return {
-      seq: idx + 1,
-      kind,
-      question: String(d.question || ''),
-    }
+    return { seq: idx + 1, kind, question: String(d.question || '') }
   })
-})
+)
 
 const isCompareMode = computed(() => compareIds.value.length >= 2)
 
-const compareRuns = computed(() => {
-  return compareIds.value
-    .map(id => historyRuns.value.find(r => r.run_id === id))
+const compareRuns = computed(() =>
+  compareIds.value
+    .map(id => fullRuns.value.find(r => r.run_id === id))
     .filter((r): r is EvalRun => !!r)
-})
+)
 
-const shortName = (run: EvalRun) => {
-  return run.run_name || run.run_id.slice(0, 8)
-}
-
-/** 对比模式：逐题结果矩阵 */
 const allCompareRows = computed(() => {
   const runs = compareRuns.value
   if (runs.length < 2) return []
@@ -592,11 +511,10 @@ const allCompareRows = computed(() => {
       return { runId: run.run_id, mark, className, quality }
     })
     const marks = cells.map(c => c.quality).filter(q => q !== null)
-    const hasDiff = new Set(marks).size > 1
     rows.push({
       seq: i + 1,
       question: String(runDetails.find(d => d[i])?.[i]?.question || ''),
-      hasDiff,
+      hasDiff: new Set(marks).size > 1,
       cells,
     })
   }
@@ -605,11 +523,9 @@ const allCompareRows = computed(() => {
 
 const diffCount = computed(() => allCompareRows.value.filter(r => r.hasDiff).length)
 
-const compareRows = computed(() => {
-  return showDiffOnly.value
-    ? allCompareRows.value.filter(r => r.hasDiff)
-    : allCompareRows.value
-})
+const compareRows = computed(() =>
+  showDiffOnly.value ? allCompareRows.value.filter(r => r.hasDiff) : allCompareRows.value
+)
 </script>
 
 <style lang="less" scoped>
@@ -620,37 +536,139 @@ const compareRows = computed(() => {
   padding: 12px;
   gap: 12px;
 
-  &__actions {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+  &__create {
     flex-shrink: 0;
   }
 
-  &__model-select {
-    width: 100%;
-  }
-
-  &__action-row {
+  /* ===== item（进行中 / 历史共用）===== */
+  &__item {
     display: flex;
+    align-items: center;
     gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
 
-    > :deep(.ant-btn) {
+    &:hover {
+      border-color: @evals-primary;
+    }
+
+    &--active {
+      border-color: fade(@evals-primary, 55%);
+    }
+
+    &--selected {
+      border-color: @evals-primary;
+      background: fade(@evals-primary, 6%);
+    }
+
+    &--compared {
+      background: fade(@evals-primary, 4%);
+    }
+
+    &-main {
       flex: 1;
       min-width: 0;
     }
+
+    /* 第一行：模型 + 编号（正常强调） */
+    &-line1 {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-primary);
+      min-width: 0;
+    }
+
+    /* 第二行：时间 + 正确题数（弱化色） */
+    &-line2 {
+      margin-top: 2px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    &-model {
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &-seq {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    &-dot {
+      flex-shrink: 0;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+
+      &--running {
+        background: #1677ff;
+        animation: eval-run-panel-pulse 1.2s ease-in-out infinite;
+      }
+
+      &--completed {
+        background: #52c41a;
+      }
+
+      &--cancelled {
+        background: #faad14;
+      }
+
+      &--failed {
+        background: #f5222d;
+      }
+    }
+
+    &-side {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    &-score {
+      font-size: 13px;
+      font-weight: 600;
+      color: @evals-primary;
+      font-variant-numeric: tabular-nums;
+    }
+
+    &-actions {
+      display: flex;
+      align-items: center;
+
+      :deep(.ant-btn) {
+        padding: 0 5px;
+        font-size: 11px;
+      }
+    }
+
+    &-delete {
+      padding: 0 4px;
+      font-size: 11px;
+    }
+
+    &-check {
+      flex-shrink: 0;
+    }
   }
 
-  &__resume-btn {
-    border-style: dashed;
-    color: @evals-primary;
-  }
-
-  &__body {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+  &__history {
+    &-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
   }
 
   &__accuracy {
@@ -673,14 +691,10 @@ const compareRows = computed(() => {
       color: var(--text-primary);
     }
 
-    &-time {
+    &-progress {
       font-size: 11px;
       color: var(--text-secondary);
-    }
-
-    &-tag {
-      font-size: 11px;
-      line-height: 1.4;
+      font-variant-numeric: tabular-nums;
     }
 
     &-body {
@@ -703,7 +717,6 @@ const compareRows = computed(() => {
       flex-direction: column;
       gap: 8px;
     }
-
   }
 
   &__stat {
@@ -758,99 +771,6 @@ const compareRows = computed(() => {
     gap: 6px;
     font-size: 12px;
     color: var(--text-secondary);
-  }
-
-  &__history {
-    &-list {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    &-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      cursor: pointer;
-      transition: border-color 0.2s ease, background-color 0.2s ease;
-
-      &:hover {
-        border-color: @evals-primary;
-      }
-
-      &--active {
-        border-color: @evals-primary;
-        background: fade(@evals-primary, 6%);
-      }
-
-      &--compared {
-        background: fade(@evals-primary, 4%);
-      }
-    }
-
-    &-check {
-      flex-shrink: 0;
-    }
-
-    &-dot {
-      flex-shrink: 0;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-
-      &--running {
-        background: #1677ff;
-        animation: eval-run-panel-pulse 1.2s ease-in-out infinite;
-      }
-
-      &--completed {
-        background: #52c41a;
-      }
-
-      &--cancelled {
-        background: #faad14;
-      }
-
-      &--failed {
-        background: #f5222d;
-      }
-    }
-
-    &-main {
-      flex: 1;
-      min-width: 0;
-    }
-
-    &-name {
-      font-size: 12px;
-      color: var(--text-primary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    &-sub {
-      font-size: 11px;
-      color: var(--text-secondary);
-      margin-top: 2px;
-    }
-
-    &-score {
-      flex-shrink: 0;
-      font-size: 13px;
-      font-weight: 600;
-      color: @evals-primary;
-    }
-
-    &-delete {
-      flex-shrink: 0;
-      padding: 0 4px;
-      font-size: 11px;
-    }
   }
 
   &__detail {

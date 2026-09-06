@@ -177,15 +177,11 @@
             </a-tooltip>
           </template>
           <EvalRunPanel
-            :dataset-id="selectedDatasetId"
             :current-run="currentRun"
-            :last-run="lastRun"
-            :is-full-run="isFullRun"
-            :last-run-time="lastRunTime"
-            :loading="evalLoading"
             :runs="runs"
             :load-run-details="fetchRunDetails"
-            @run="onStartRun"
+            @create-run="runCreateVisible = true"
+            @rerun="onRerunRun"
             @resume="onResumeRun"
             @stop="onStopRun"
             @select-run="onSelectHistoricalRun"
@@ -205,6 +201,14 @@
       v-model:open="compareVisible"
       :runs="historyFullRuns"
       :dataset-id="selectedDatasetId"
+    />
+
+    <EvalRunCreateModal
+      v-model:open="runCreateVisible"
+      :dataset-id="selectedDatasetId"
+      :dataset-options="datasetOptions"
+      :submitting="evalLoading"
+      @confirm="onRunCreateConfirm"
     />
 
     <a-modal
@@ -306,10 +310,11 @@ import {
   EvalQuestionList,
   EvalRunPanel,
   EvalImportModal,
+  EvalRunCreateModal,
 } from '@angineer/evals-ui'
 import { useEvalDataset, useEvalRun, useEvalDatasetTree } from '@angineer/evals-ui'
 import type { EvalTreeNode } from '@angineer/evals-ui'
-import type { EvalDataset, EvalQuestion } from '@angineer/evals-ui'
+import type { EvalDataset, EvalQuestion, EvalRun } from '@angineer/evals-ui'
 import FolderModal from './components/FolderModal.vue'
 import EvalCompareModal from './components/EvalCompareModal.vue'
 import EvalNightlyPanel from './components/EvalNightlyPanel.vue'
@@ -472,17 +477,8 @@ const historyFullRuns = computed(() => {
   return runs.value.filter(r => r.is_full_run !== false)
 })
 
-/** 格式化上次整体测试时间，格式如 "04-09 18:42" */
-const lastRunTime = computed(() => {
-  const iso = lastRun.value?.completed_at || lastRun.value?.started_at
-  if (!iso) return undefined
-  const d = new Date(iso)
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${mm}-${dd} ${hh}:${mi}`
-})
+/** 左树组件引用：新增评测弹框切换题集时同步高亮 */
+const evalTreeRef = ref<InstanceType<typeof EvalDatasetTree> | null>(null)
 
 /** 构建 FolderModal 所需的文件夹树数据，追加根目录选项 */
 const folderTreeData = computed(() => {
@@ -562,31 +558,79 @@ const onQuestionExpandDetail = async (questionId: string) => {
   await fetchQuestionDetail(run.run_id, questionId)
 }
 
-const onStartRun = async (configName?: string) => {
-  if (!selectedDatasetId.value) return
+/** 新增评测弹框：模型/题集在弹框选定；切换题集时同步切左树选中态 */
+const runCreateVisible = ref(false)
+
+/** 题集下拉选项：按左树层级带出文件夹路径前缀，避免同名测试集无法区分 */
+const datasetOptions = computed(() => {
+  const folderTitle = new Map(folders.value.map(f => [f.folder_id, f.title]))
+  const pathOf = (dataset: EvalDataset): string => {
+    const parts: string[] = [dataset.title]
+    let parent = folderTitle.has(dataset.folder_id) ? dataset.folder_id : ''
+    const guard = new Set<string>()
+    while (parent && !guard.has(parent)) {
+      guard.add(parent)
+      parts.unshift(folderTitle.get(parent) || '')
+      parent = folders.value.find(f => f.folder_id === parent)?.parent_folder_id || ''
+    }
+    return parts.filter(Boolean).join(' / ')
+  }
+  return datasets.value.map(d => ({ value: d.dataset_id, label: pathOf(d) }))
+})
+
+const startRunGuarded = async (
+  datasetId: string,
+  opts: { resumeRunId?: string; configName?: string; judgeConfigName?: string; successText: string },
+) => {
   evalLoading.value = true
   try {
-    await startRun(selectedDatasetId.value, selectedDocIds.value, undefined, configName)
-    message.success('评测已启动')
+    await startRun(
+      datasetId,
+      datasetId === selectedDatasetId.value ? selectedDocIds.value : undefined,
+      opts.resumeRunId,
+      opts.configName,
+      opts.judgeConfigName,
+    )
+    message.success(opts.successText)
+    return true
   } catch (e: any) {
     message.error(e.message || '启动评测失败')
+    return false
   } finally {
     evalLoading.value = false
   }
 }
 
-/** 断点续跑：复用已中断 run 的已完成结果，只执行剩余题目 */
-const onResumeRun = async (resumeRunId: string, configName?: string) => {
-  if (!selectedDatasetId.value) return
-  evalLoading.value = true
-  try {
-    await startRun(selectedDatasetId.value, selectedDocIds.value, resumeRunId, configName)
-    message.success('断点续跑已启动')
-  } catch (e: any) {
-    message.error(e.message || '断点续跑失败')
-  } finally {
-    evalLoading.value = false
+const onRunCreateConfirm = async (payload: { datasetId: string; configName?: string; judgeConfigName?: string }) => {
+  if (payload.datasetId !== selectedDatasetId.value) {
+    await onDatasetSelect([payload.datasetId], [])
+    const tree = evalTreeRef.value as { selectedKeys: string[] } | null
+    if (tree) tree.selectedKeys = [payload.datasetId]
   }
+  const ok = await startRunGuarded(payload.datasetId, {
+    configName: payload.configName,
+    judgeConfigName: payload.judgeConfigName,
+    successText: '评测已启动',
+  })
+  if (ok) runCreateVisible.value = false
+}
+
+/** 置顶 item「重来」：以相同模型/题集重新发起一次全量评测（旧中断记录保留可续） */
+const onRerunRun = async (run: EvalRun) => {
+  const snap = (run.config_snapshot || {}) as { model?: string; judge_config?: string }
+  await startRunGuarded(run.dataset_id, {
+    configName: snap.model,
+    judgeConfigName: snap.judge_config,
+    successText: '已重新发起评测',
+  })
+}
+
+/** 断点续跑：复用已中断 run 的已完成结果，只执行剩余题目 */
+const onResumeRun = async (run: EvalRun) => {
+  await startRunGuarded(run.dataset_id, {
+    resumeRunId: run.run_id,
+    successText: '断点续跑已启动',
+  })
 }
 
 /** 停止当前评测任务 */
@@ -631,14 +675,26 @@ const onNightlyOpenRun = async (payload: { datasetId: string; runId: string }) =
 }
 
 const onDeleteRun = (runId: string) => {
+  const run = runs.value.find(r => r.run_id === runId)
+  const running = run?.status === 'running'
   Modal.confirm({
     title: '确认删除',
-    content: '删除后该次评测记录及所有题目详情将永久移除，不可恢复。',
+    content: running
+      ? '该评测正在运行，删除将先停止它，再永久移除该次记录及题目详情，不可恢复。'
+      : '删除后该次评测记录及所有题目详情将永久移除，不可恢复。',
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
     onOk: async () => {
       try {
+        // 删除运行中的记录前必须先停，否则后台线程仍会往已删除的 run 写明细
+        if (running) {
+          try {
+            await stopRun(runId)
+          } catch {
+            /* 已结束的 run 停不下：继续删除 */
+          }
+        }
         await deleteRun(runId, selectedDatasetId.value)
         message.success('评测记录已删除')
       } catch (e: any) {

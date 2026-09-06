@@ -64,8 +64,14 @@ export function useEvalRun() {
   const pendingDetails = new Map<string, Promise<EvalRunDetail[]>>()
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
-  /** 启动整体评测 */
-  const startRun = async (datasetId: string, docIds?: string[], resumeRunId?: string, configName?: string) => {
+  /** 启动整体评测。judgeConfigName=新增评测弹框选定的评价模型（判分候选链首位） */
+  const startRun = async (
+    datasetId: string,
+    docIds?: string[],
+    resumeRunId?: string,
+    configName?: string,
+    judgeConfigName?: string,
+  ) => {
     loading.value = true
     isFullRun.value = true
     try {
@@ -73,6 +79,7 @@ export function useEvalRun() {
       if (docIds && docIds.length > 0) body.doc_ids = docIds
       if (resumeRunId) body.resume_run_id = resumeRunId
       if (configName) body.config_name = configName
+      if (judgeConfigName) body.judge_config_name = judgeConfigName
       const resp = await fetch('/api/evals/runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -372,7 +379,9 @@ export function useEvalRun() {
     }
   }
 
-  /** 停止当前评测任务 */
+  /** 停止当前评测任务。优雅停止是异步的（后端完成当前题目才结算 cancelled），
+   * 200 只代表"停止指令已受理"：保持轮询直到状态落定（fetchRun 终态自动停表），
+   * 立刻停表会让 UI 卡在"运行中"（旧实现实踩）。 */
   const stopRun = async (runId: string) => {
     try {
       const resp = await fetch(`/api/evals/runs/${encodePathSegment(runId)}/stop`, {
@@ -380,10 +389,16 @@ export function useEvalRun() {
         headers: { 'Content-Type': 'application/json' },
       })
       if (resp.ok) {
-        stopPolling()
         await fetchRun(runId)
-        if (isFullRun.value && currentRun.value) {
-          lastRun.value = currentRun.value
+        const settled = ['completed', 'failed', 'cancelled'].includes(currentRun.value?.status || '')
+        if (settled) {
+          stopPolling()
+          if (isFullRun.value && currentRun.value) {
+            lastRun.value = currentRun.value
+          }
+        } else {
+          // 仍在收尾：继续轮询到终态（startPolling 内部会先清旧表，并立即拉一次）
+          startPolling(runId)
         }
       } else {
         const errText = await resp.text().catch(() => '')

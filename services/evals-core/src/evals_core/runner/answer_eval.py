@@ -107,11 +107,23 @@ def _judge_candidates() -> List[Optional[str]]:
     return [single] if single else [None]
 
 
+def _resolve_judge_candidates(preferred: Optional[str] = None) -> List[Optional[str]]:
+    """run 级判分模型优先：UI 弹框选定的 judge_config_name 排第一，其后接环境配置
+    候选链做故障兜底（去重）；未指定时完全等价 _judge_candidates()。
+    纪律不变：只在本候选链内降级，绝不落到被测模型自判。"""
+    chain = _judge_candidates()
+    name = str(preferred or "").strip()
+    if not name:
+        return chain
+    return [name] + [item for item in chain if item != name]
+
+
 def _llm_semantic_evaluate(
     answer: str,
     gold_answer: str,
     checks: List[Dict[str, Any]],
     semantic_threshold: float,
+    judge_config_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """调用 LLM 对系统答案做语义评判，返回评分与理由。"""
     import time as _time
@@ -131,9 +143,9 @@ def _llm_semantic_evaluate(
     ]
     _t_start = _time.time()
     client = get_llm_client()
-    # judge 与被测解耦（候选链见 _judge_candidates）。温度 0 会让判分器整体偏严
-    # （漏一个数值就从 0.8 打到 0.4），回到默认 0.1，宽容度靠提示词规则保证。
-    candidates = _judge_candidates()
+    # judge 与被测解耦（候选链见 _resolve_judge_candidates，run 级指定优先）。
+    # 温度 0 会让判分器整体偏严（漏一个数值就从 0.8 打到 0.4），回到默认 0.1，宽容度靠提示词规则保证。
+    candidates = _resolve_judge_candidates(judge_config_name)
     last_exc: Optional[Exception] = None
     for index, config_name in enumerate(candidates):
         try:
@@ -366,7 +378,12 @@ class AnswerEvaluator(BaseEvaluator):
         failed_checks = [check for check in checks if not evaluate_correctness_check(answer, check)]
         keyword_score = 1.0 if not failed_checks else 0.0
 
-        semantic_result = _llm_semantic_evaluate(answer, gold_answer, checks, semantic_threshold)
+        # run 级指定判分模型（UI 新增评测弹框选定，经 question 字典透传，
+        # 与 config_name 同链路；未指定时走环境候选链）
+        semantic_result = _llm_semantic_evaluate(
+            answer, gold_answer, checks, semantic_threshold,
+            judge_config_name=str(question.get("judge_config_name") or "").strip() or None,
+        )
 
         if semantic_result["semantic_evaluated"]:
             semantic_score = semantic_result["semantic_score"]

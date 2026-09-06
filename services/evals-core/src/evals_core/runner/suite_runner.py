@@ -21,6 +21,17 @@ _current_run_id: Optional[str] = None
 _stop_event: Optional[threading.Event] = None
 
 
+def _manifest_with_judge(config_name: Optional[str], judge_config_name: Optional[str]) -> Dict[str, Any]:
+    """run manifest + 判分模型记录（UI 弹框选定的评价模型，供历史 item 回溯与展示）。"""
+    from angineer_core.run_manifest import build_run_manifest
+
+    manifest = build_run_manifest(config_name)
+    judge = str(judge_config_name or "").strip()
+    if judge:
+        manifest["judge_config"] = judge
+    return manifest
+
+
 def _generate_run_name(config_name: Optional[str] = None) -> str:
     """生成运行名称，格式: {模型名}_{MMDD-HHmm}。"""
     model_name = config_name or os.getenv("ANGINEER_DEFAULT_MODEL", "eval")
@@ -365,6 +376,7 @@ def _run_questions_concurrent(
     override_doc_ids: Optional[List[str]],
     config_name: Optional[str],
     rescore_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    judge_config_name: Optional[str] = None,
 ) -> int:
     """线程池并行跑题：提交阶段检查停止信号，as_completed 收结果写库。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -399,6 +411,8 @@ def _run_questions_concurrent(
                 prepared["doc_ids"] = override_doc_ids
             if config_name:
                 prepared["config_name"] = config_name
+            if judge_config_name:
+                prepared["judge_config_name"] = judge_config_name
 
             def _task(prep: Dict[str, Any], names, override, qid: str = question_id):
                 # 停止命令后仍在池队列里的任务：不执行、不改状态行（保持 pending
@@ -467,6 +481,7 @@ def _run_suite_thread(
     in_place: bool = False,
     config_name: Optional[str] = None,
     rescore_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    judge_config_name: Optional[str] = None,
 ) -> None:
     """在线程中执行评测套件，含异常保护、并发控制和优雅停止支持。
 
@@ -523,6 +538,7 @@ def _run_suite_thread(
                 override_doc_ids=override_doc_ids,
                 config_name=config_name,
                 rescore_map=rescore_map,
+                judge_config_name=judge_config_name,
             )
             if _stop_event.is_set():
                 _finish_cancelled(run_id, questions)
@@ -560,6 +576,8 @@ def _run_suite_thread(
                     question = {**question, "doc_ids": override_doc_ids}
                 if config_name:
                     question = {**question, "config_name": config_name}
+                if judge_config_name:
+                    question = {**question, "judge_config_name": judge_config_name}
                 # 清理该题残留/重复详情行，避免续跑后同一题出现多条记录
                 result_store.delete_run_detail(run_id, question_id)
                 result_store.insert_run_detail({
@@ -683,8 +701,12 @@ def start_eval_run(
     dataset_id: str, question_id: Optional[str] = None, save: bool = True,
     override_doc_ids: Optional[List[str]] = None, resume_run_id: Optional[str] = None,
     config_name: Optional[str] = None, rescore_question_ids: Optional[List[str]] = None,
+    judge_config_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """启动评测运行（异步线程），立即返回 run_id，前端轮询获取进度。
+
+    config_name=运行（被测）模型；judge_config_name=评价模型（UI 新增评测弹框选定，
+    判分候选链首位、失败回退环境链），记录进 run manifest 供历史 item 回溯与展示。
 
     resume_run_id 非空时进行断点续跑：复用该 run 中已完成的题目结果，
     只执行剩余题目，最后合并为一份完整 run。
@@ -716,7 +738,6 @@ def start_eval_run(
     pre_done: Dict[str, Dict[str, Any]] = {}
     rescore_map: Dict[str, Dict[str, Any]] = {}
     in_place_resume = False
-    from angineer_core.run_manifest import build_run_manifest
 
     if resume_run_id:
         source_run = result_store.get_run(resume_run_id)
@@ -741,7 +762,7 @@ def start_eval_run(
         if not pre_done and not rescore_map:
             raise ValueError("续跑源 run 没有可复用的已完成题目")
         # 原地续跑：复用原 run 记录，避免同一轮评测产生两条记录
-        result_store.reset_run_for_resume(resume_run_id, build_run_manifest(config_name))
+        result_store.reset_run_for_resume(resume_run_id, _manifest_with_judge(config_name, judge_config_name))
         in_place_resume = True
         run_id = resume_run_id
         run_name = source_run.get("run_name") or _generate_run_name(config_name)
@@ -749,13 +770,14 @@ def start_eval_run(
         run_name = _generate_run_name(config_name) if is_full_run else ""
         run_data = result_store.create_run(
             dataset_id, len(questions), run_name=run_name, is_full_run=is_full_run,
-            config_snapshot=build_run_manifest(config_name),
+            config_snapshot=_manifest_with_judge(config_name, judge_config_name),
         )
         run_id = run_data["run_id"]
 
     thread = threading.Thread(
         target=_run_suite_thread,
-        args=(run_id, dataset_id, questions, override_doc_ids, pre_done, in_place_resume, config_name, rescore_map),
+        args=(run_id, dataset_id, questions, override_doc_ids, pre_done, in_place_resume,
+              config_name, rescore_map, judge_config_name),
         daemon=True,
     )
     thread.start()
