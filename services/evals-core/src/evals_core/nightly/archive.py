@@ -1,0 +1,146 @@
+"""nightly 结论落盘（"发布"仅指写数据文件，与代码 push/系统发版无关）。
+
+<nightly_root>/<YYYY-MM-DD>/{nightly.json, report.md}：夜间维护页的唯一数据源。
+结论必须快照化而不是从 evals.sqlite 现算——日常测试页可删 run、门禁 bootstrap 现算慢、
+崩溃/超时日本就没有可算的 run，历史（保留 30 天、每天一条不断档）要经得住这些。
+"""
+import json
+import shutil
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
+from . import paths
+
+KEEP_DAYS_DEFAULT = 30
+REGRESSION_ITEMS_MAX = 50
+FIXED_ITEMS_MAX = 20
+_QUESTION_MAX = 300
+_DATE_FMT = "%Y-%m-%d"
+
+
+def verdict(state: str, delta, regress_count: int) -> str:
+    """≤20 字一句话评价（表格「评价」列）：pp 取整，精确小数留给「基线」列。
+    措辞面向普通读者：不写"回归/门禁"等内部术语。"""
+    if state == "error":
+        return "评测中断，未出结果"
+    if state == "red":
+        return f"回退 {regress_count} 题，需排查" if regress_count else "整体变差，需排查"
+    if delta is None:
+        return "无基线可比，未见变差"
+    pp = round(delta * 100)
+    if pp >= 1:
+        return f"提升 {pp}pp，没有题目变差"
+    if pp <= -1:
+        return f"回落 {abs(pp)}pp，正常波动"
+    return "与基线持平，没有变差"
+
+
+def load_question_texts(dataset_file: Path) -> dict:
+    """题集导出格式 {"items":[...]}（evals 导入件）与 manifest {"questions":[...]} 都兼容。"""
+    try:
+        data = json.loads(Path(dataset_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    rows = (data.get("items") or data.get("questions")) if isinstance(data, dict) else None
+    for q in rows or []:
+        if not isinstance(q, dict):
+            continue
+        qid, text = q.get("question_id") or q.get("uuid"), str(q.get("question") or q.get("query") or "")
+        if qid and text:
+            out[str(qid)] = text[:_QUESTION_MAX]
+    return out
+
+
+def _question_items(qids, buckets: dict, question_texts: dict, limit: int, evidence_map: dict = None) -> list:
+    items = []
+    for qid in list(qids)[:limit]:
+        bucket = str(buckets.get(qid) or "")
+        item = {
+            "qid": qid,
+            "question": question_texts.get(str(qid), ""),
+            "bucket": bucket.split("(", 1)[0],  # 机读码，前端映射大白话；原始串留 tooltip
+            "bucket_detail": bucket,
+        }
+        ev = (evidence_map or {}).get(str(qid))
+        if ev:
+            item["evidence"] = ev  # 逐题前后对比证据（展开查看"问题具体在哪"）
+        items.append(item)
+    return items
+
+
+def build_entry(gate: dict, summary_scores: dict, question_texts: dict,
+                dataset_id: str, date: str, run_id: str = "", state: str = "green") -> dict:
+    """门禁结论 + run 汇总 → 单日 nightly.json 条目（键与站点接口/前端协议一致）。"""
+    matrix = {k: (gate.get("matrix") or {}).get(k) for k in ("pp", "pf", "fp", "ff")}
+    summary = summary_scores or {}
+    regressions = gate.get("regressions") or {}
+    reg_ids = [qid for qid, _ in sorted(regressions.items(), key=lambda kv: (kv[1], kv[0]))]
+    return {
+        "date": date,
+        "state": state,
+        "generated_at": datetime.now(paths.BJT).isoformat(),
+        "run_id": run_id or gate.get("new") or "",
+        "dataset_id": dataset_id,
+        "overall_score": summary.get("overall_score"),
+        "correct": summary.get("correct"),
+        "total": summary.get("total"),
+        "errored": summary.get("errored"),
+        "judge_failed_count": summary.get("judge_failed_count"),
+        "delta": gate.get("delta"),
+        "delta_ci95": gate.get("delta_ci95"),
+        "base_label": gate.get("base_label"),
+        "matrix": matrix,
+        "gate_reasons": gate.get("gate_reasons") or [],
+        "regressions": regressions,
+        "verdict": verdict(state, gate.get("delta"), len(regressions)),
+        "regression_items": _question_items(
+            reg_ids, regressions, question_texts, REGRESSION_ITEMS_MAX, gate.get("regression_details") or {}),
+        "fixed_items": _question_items(gate.get("fixed") or [], {}, question_texts, FIXED_ITEMS_MAX),
+    }
+
+
+def build_error_entry(dataset_id: str, date: str, note: str) -> dict:
+    return {
+        "date": date,
+        "state": "error",
+        "generated_at": datetime.now(paths.BJT).isoformat(),
+        "dataset_id": dataset_id,
+        "verdict": verdict("error", None, 0),
+        "note": note or "评测环节未完成（上游步骤失败）",
+    }
+
+
+def prune_old(target_root: Path, keep_days: int, today: str) -> list:
+    """按日期名清理旧目录（目录名不合法日期的不动，人工排查留证）。"""
+    removed = []
+    try:
+        floor = (datetime.strptime(today, _DATE_FMT) - timedelta(days=keep_days)).strftime(_DATE_FMT)
+    except ValueError:
+        return removed
+    for day in sorted(target_root.iterdir()):
+        if not day.is_dir():
+            continue
+        try:
+            datetime.strptime(day.name, _DATE_FMT)
+        except ValueError:
+            continue
+        if day.name < floor:
+            shutil.rmtree(day, ignore_errors=True)
+            removed.append(day.name)
+    return removed
+
+
+def publish_day(entry: dict, report_md: Optional[str], root: Optional[Path] = None,
+                keep_days: int = KEEP_DAYS_DEFAULT) -> Path:
+    """写单日结论目录并清理过期（幂等：同日重跑覆盖）。"""
+    root = Path(root) if root else paths.nightly_root()
+    day_dir = root / str(entry["date"])
+    day_dir.mkdir(parents=True, exist_ok=True)
+    (day_dir / "nightly.json").write_text(
+        json.dumps(entry, ensure_ascii=False, indent=1), encoding="utf-8")
+    if report_md:
+        (day_dir / "report.md").write_text(report_md, encoding="utf-8")
+    prune_old(root, keep_days, str(entry["date"]))
+    return day_dir

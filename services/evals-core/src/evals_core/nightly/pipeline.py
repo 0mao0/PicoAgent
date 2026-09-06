@@ -1,0 +1,155 @@
+"""nightly 全内置流水线：评测 → 异常补判 → 门禁 → 落盘结论 → 企微通知。
+
+由 aichat-api 内置调度器到点触发（也可管理页手动触发），与「开始评测」按钮同一套
+suite_runner——nightly 不是外部系统，就是产品自己给自己排的定时体检。
+
+不变式：
+- 无论成败，当天必有一条结论落盘（失败也要 publish error 条目）；
+- 通知三态严格区分，"通过"必须有门禁结论背书；
+- 同一时刻至多一条流水线（并发锁在调用方 nightly_control 里）。
+"""
+import asyncio
+import logging
+import time
+from typing import Optional
+
+from evals_core.runner import anomaly, suite_runner
+from evals_core.storage import result_store
+
+from . import archive, gate, notify, paths, report
+
+logger = logging.getLogger("evals_core.nightly.pipeline")
+
+RUNNING_STATES = ("running", "pending", "queued")
+POLL_INTERVAL_S = 10
+DEFAULT_TIMEOUT_HOURS = 4.5   # 487 题全量含补判的最坏窗口（01:00 起跑 06:00 前收工）
+DEFAULT_RETRY_ROUNDS = 2
+
+
+class PipelineError(RuntimeError):
+    pass
+
+
+async def _sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+async def _await_terminal(run_id: str, deadline: float) -> dict:
+    """轮询到 run 终态；超时/失败/取消都按 PipelineError（上层落 error 档结论）。"""
+    last_status = ""
+    while time.monotonic() < deadline:
+        run = await asyncio.to_thread(result_store.get_run, run_id)
+        status = (run or {}).get("status", "")
+        if status and status != last_status:
+            logger.info("nightly run %s 状态: %s (%s/%s)", run_id, status,
+                        (run or {}).get("completed_questions"), (run or {}).get("total_questions"))
+            last_status = status
+        if status not in RUNNING_STATES:
+            if status != "completed":
+                raise PipelineError(f"评测 run {run_id} 未正常完成（status={status}）")
+            return run
+        await _sleep(POLL_INTERVAL_S)
+    raise PipelineError(f"评测 run {run_id} 超时未完成（超过时限仍未到终态）")
+
+
+async def _auto_retry(run_id: str, dataset_id: str, rounds: int, deadline: float) -> dict:
+    """judge_fail 只重判分、exec_error 整题重跑（原地续跑复用同一 run），≤rounds 轮。"""
+    for round_no in range(1, max(rounds, 0) + 1):
+        details = await asyncio.to_thread(result_store.list_run_details, run_id, True)
+        found = anomaly.detect_anomalies(details)
+        judge_ids = [q for q in found.get(anomaly.JUDGE_FAIL, [])]
+        exec_ids = [q for q in found.get(anomaly.EXEC_ERROR, [])]
+        if not judge_ids and not exec_ids:
+            return await asyncio.to_thread(result_store.get_run, run_id)
+        logger.info("nightly 补判第 %d 轮：%s 题重判、%s 题重跑", round_no, len(judge_ids), len(exec_ids))
+        # resume 原地复用同一 run；exec_error 行无分数自动被 pre_done 排除 → 整题重跑
+        await asyncio.to_thread(
+            lambda: suite_runner.start_eval_run(
+                dataset_id=dataset_id, resume_run_id=run_id, rescore_question_ids=judge_ids),
+        )
+        await _await_terminal(run_id, deadline)
+    details = await asyncio.to_thread(result_store.list_run_details, run_id, True)
+    found = anomaly.detect_anomalies(details)
+    remaining = {k: v for k, v in found.items() if k != anomaly.SLOW and v}
+    if remaining:
+        raise PipelineError("补判轮数耗尽仍有未清零异常: " + ", ".join(f"{k}={len(v)}" for k, v in remaining.items()))
+    return await asyncio.to_thread(result_store.get_run, run_id)
+
+
+async def _compute_and_publish(run_id: str, dataset_id: str, resamples: int, site_url: str, webhook: str) -> dict:
+    """门禁 + 报告 + 落盘 + 通知，全成功返回结论 dict（state=green/red）。"""
+    loop_run = await asyncio.to_thread(result_store.get_run, run_id)
+    details = await asyncio.to_thread(result_store.list_run_details, run_id)
+    manifest = await asyncio.to_thread(_load_json, paths.manifest_path())
+    base_run = await asyncio.to_thread(gate.load_baseline)
+    new_run = {"run_id": run_id, "dataset_id": dataset_id, "details": details}
+    gate_res = await asyncio.to_thread(
+        gate.compare_runs, base_run, gate.normalize_run(new_run), manifest or {"questions": []}, resamples)
+    summary = await asyncio.to_thread(
+        report.group_and_summarize, details, manifest or {"questions": []})
+    report_md = report.render_markdown(summary)
+
+    state = "red" if gate_res.get("gate_red") else "green"
+    q_texts = archive.load_question_texts(paths.dataset_json_path(dataset_id))
+    entry = archive.build_entry(
+        gate_res, loop_run.get("summary_scores") or {}, q_texts,
+        dataset_id, paths.today_bjt(), run_id=run_id, state=state)
+    archive.publish_day(entry, report_md)
+
+    raw_for_card = {k: loop_run.get(k) for k in ("started_at", "completed_at")}
+    raw_for_card["summary_scores"] = loop_run.get("summary_scores") or {}
+    text = notify.append_links(
+        notify.build_message(raw_for_card, gate_res, state), site_url)
+    await _notify_best_effort(webhook, text)
+    return {"state": state, "ok": state == "green", "run_id": run_id,
+            "overall_score": entry.get("overall_score"), "correct": entry.get("correct"),
+            "total": entry.get("total"), "detail": "；".join(gate_res.get("gate_reasons") or [])[:300]}
+
+
+def _load_json(path):
+    import json
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+async def _notify_best_effort(webhook: str, text: str) -> None:
+    if not webhook:
+        logger.info("未配置企微 webhook，跳过通知")
+        return
+    try:
+        await asyncio.to_thread(notify.send, webhook, text)
+    except Exception as exc:  # noqa: BLE001 通知失败不翻转评测结论
+        logger.warning("企微通知失败（不影响结论）: %s", exc)
+
+
+async def run_nightly(*, dataset_id: str,
+                      timeout_hours: float = DEFAULT_TIMEOUT_HOURS,
+                      retry_rounds: int = DEFAULT_RETRY_ROUNDS,
+                      resamples: int = 1000,
+                      site_url: str = "",
+                      webhook: str = "") -> dict:
+    """执行整条流水线并保证"当天必有结论"。返回 {state, ok, run_id, detail, ...}。"""
+    date = paths.today_bjt()
+    deadline = time.monotonic() + timeout_hours * 3600
+    run_id = ""
+    try:
+        started = await asyncio.to_thread(
+            lambda: suite_runner.start_eval_run(dataset_id=dataset_id))
+        run_id = str(started.get("run_id") or "")
+        if not run_id:
+            raise PipelineError("start_eval_run 未返回 run_id")
+        logger.info("nightly 流水线启动：dataset=%s run=%s", dataset_id, run_id)
+        await _await_terminal(run_id, deadline)
+        await _auto_retry(run_id, dataset_id, retry_rounds, deadline)
+        return await _compute_and_publish(run_id, dataset_id, resamples, site_url, webhook)
+    except Exception as exc:  # noqa: BLE001 任何异常都收口为 error 档结论，绝不让历史断档
+        logger.exception("nightly 流水线失败（run=%s）", run_id)
+        note = f"{type(exc).__name__}: {str(exc)[:280]}"
+        try:
+            archive.publish_day(archive.build_error_entry(dataset_id, date, note), None)
+            await _notify_best_effort(webhook, notify.build_message(None, None, notify.STATE_ERROR, note))
+        except Exception:  # noqa: BLE001 兜底路径再失败只留日志
+            logger.exception("nightly error 档结论落盘/通知也失败")
+        return {"state": "error", "ok": False, "run_id": run_id, "detail": note[:300]}
