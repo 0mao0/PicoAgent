@@ -394,12 +394,18 @@ onBeforeUnmount(() => {
   border-collapse: collapse;
   margin: 8px 0;
 }
+/* 14 列指标表按紧凑档排版：窄 padding + 小字号 + 等宽数字，避免整表过宽 */
 .ndd-md :deep(th), .ndd-md :deep(td) {
   border: 1px solid var(--border-color, rgba(5, 5, 5, 0.08));
-  padding: 4px 10px;
-  font-size: 12px;
-  line-height: 18px;
+  padding: 1px 5px;
+  font-size: 11.5px;
+  line-height: 16px;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ndd-md :deep(th:first-child), .ndd-md :deep(td:first-child) {
+  white-space: normal;
+  max-width: 120px;
 }
 .ndd-md :deep(th) {
   background: var(--bg-secondary, rgba(128, 128, 128, 0.06));
