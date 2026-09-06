@@ -78,7 +78,19 @@ if prev_exists:
 else:
     total = 1
 
-content_parts = ["## ✅ AnGIneer 部署完成"]
+def _release_version() -> str:
+    """版本号以根 package.json 为准（发版约定与 README/tag 三处同步）；读取失败退回最近 tag。"""
+    try:
+        with open(os.path.join(repo, "package.json"), encoding="utf-8") as fh:
+            version = str(json.load(fh).get("version") or "")
+        if version:
+            return version if version.startswith("v") else "v" + version
+    except Exception:  # noqa: BLE001
+        pass
+    return _git(["describe", "--tags", "--abbrev=0"]) or "unknown"
+
+
+content_parts = ["## ✅ AnGIneer 部署完成", f"> **版本:** `{_release_version()}`"]
 if prev_exists:
     content_parts.append(f"> **本次提交:** `{total}` 个")
     for line in commit_lines:
