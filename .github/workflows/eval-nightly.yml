@@ -77,7 +77,8 @@ jobs:
       - name: Notify WeCom (always)
         if: always()
         env:
-          WEBHOOK: ${{ secrets.WECOM_WEBHOOK_URL }}
+          # 夜间测试通知归「AngIneer夜间测试」机器人；部署通知（deploy.yml）归部署精灵，各自独立 secret
+          WEBHOOK: ${{ secrets.NIGHTLY_WECOM_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 scripts/open_ragbench/notify.py \
