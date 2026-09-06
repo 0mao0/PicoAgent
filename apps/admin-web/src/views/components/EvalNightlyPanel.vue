@@ -1,80 +1,82 @@
 <template>
   <!-- 夜间维护：nightly 门禁结果的历史与明细（数据源 data/evals/nightly/，仅管理员） -->
   <div class="eval-nightly-panel">
-    <div class="nightly-schedule">
-      <div class="nightly-schedule__group">
-        <span class="nightly-schedule__label">每晚定时执行（北京时间）</span>
-        <a-switch v-model:checked="sched.enabled" size="small" />
-        <a-time-picker
-          v-model:value="sched.time"
-          format="HH:mm"
-          value-format="HH:mm"
-          :allow-clear="false"
-          size="small"
-          width="88px"
-        />
-        <template v-if="scheduleDirty">
-          <a-button size="small" type="primary" :loading="sched.saving" @click="saveSchedule">
-            保存
-          </a-button>
-          <a-button size="small" @click="cancelSchedule">取消</a-button>
-        </template>
-      </div>
-      <a-button size="small" :disabled="sched.running" @click="openRunModal">
-        {{ sched.running ? '流水线运行中…' : '立即运行' }}
-      </a-button>
-    </div>
-    <DataTable
-      :columns="columns"
-      :data-source="days"
-      row-key="date"
-      :loading="loading"
-      :expand-row-by-click="true"
-      :empty-text="EMPTY_TEXT"
-      storage-key="angineer-nightly-v2"
-      @expand="handleExpand"
-    >
-      <template #headerCell="{ column }">
-        <template v-if="column.key === 'delta'">
-          基线
-          <a-tooltip title="相对固化基线的正确率差（个百分点），+ 表示超过基线；基线为人工钉住的稳定 run">
-            <QuestionCircleOutlined class="nightly-help" />
-          </a-tooltip>
-        </template>
-      </template>
-
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'subject'">
-          {{ record.subject || record.dataset_id || '—' }}
-        </template>
-        <template v-else-if="column.key === 'time'">
-          {{ fmtTime(record.generated_at) }}
-        </template>
-        <template v-else-if="column.key === 'state'">
-          <a-tag :color="stateColor(record.state)">{{ stateLabel(record.state) }}</a-tag>
-        </template>
-        <template v-else-if="column.key === 'overall'">
-          {{ pct(record.overall_score) }}
-        </template>
-        <template v-else-if="column.key === 'delta'">
-          <span :class="deltaClass(record)">{{ deltaText(record) }}</span>
-        </template>
-        <template v-else-if="column.key === 'verdict'">
-          {{ record.verdict || fallbackVerdict(record) }}
-        </template>
-      </template>
-
-      <template #expandedRowRender="{ record }">
-        <a-spin :spinning="!detailOf(record)">
-          <NightlyDayDetail
-            v-if="detailOf(record)"
-            :day="record"
-            :detail="detailOf(record)"
-            @open-run="(p) => emit('open-run', p)"
+    <div class="nightly-content">
+      <div class="nightly-schedule">
+        <div class="nightly-schedule__group">
+          <span class="nightly-schedule__label">每晚定时执行（北京时间）</span>
+          <a-switch v-model:checked="sched.enabled" size="small" />
+          <a-time-picker
+            v-model:value="sched.time"
+            format="HH:mm"
+            value-format="HH:mm"
+            :allow-clear="false"
+            size="small"
+            width="88px"
           />
-        </a-spin>
-      </template>
-    </DataTable>
+          <template v-if="scheduleDirty">
+            <a-button size="small" type="primary" :loading="sched.saving" @click="saveSchedule">
+              保存
+            </a-button>
+            <a-button size="small" @click="cancelSchedule">取消</a-button>
+          </template>
+        </div>
+        <a-button size="small" :disabled="sched.running" @click="openRunModal">
+          {{ sched.running ? '流水线运行中…' : '立即运行' }}
+        </a-button>
+      </div>
+      <DataTable
+        :columns="columns"
+        :data-source="days"
+        row-key="date"
+        :loading="loading"
+        :expand-row-by-click="true"
+        :empty-text="EMPTY_TEXT"
+        storage-key="angineer-nightly-v2"
+        @expand="handleExpand"
+      >
+        <template #headerCell="{ column }">
+          <template v-if="column.key === 'delta'">
+            基线
+            <a-tooltip title="相对固化基线的正确率差（个百分点），+ 表示超过基线；基线为人工钉住的稳定 run">
+              <QuestionCircleOutlined class="nightly-help" />
+            </a-tooltip>
+          </template>
+        </template>
+
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'subject'">
+            {{ record.subject || record.dataset_id || '—' }}
+          </template>
+          <template v-else-if="column.key === 'time'">
+            {{ fmtTime(record.generated_at) }}
+          </template>
+          <template v-else-if="column.key === 'state'">
+            <a-tag :color="stateColor(record.state)">{{ stateLabel(record.state) }}</a-tag>
+          </template>
+          <template v-else-if="column.key === 'overall'">
+            {{ pct(record.overall_score) }}
+          </template>
+          <template v-else-if="column.key === 'delta'">
+            <span :class="deltaClass(record)">{{ deltaText(record) }}</span>
+          </template>
+          <template v-else-if="column.key === 'verdict'">
+            {{ record.verdict || fallbackVerdict(record) }}
+          </template>
+        </template>
+
+        <template #expandedRowRender="{ record }">
+          <a-spin :spinning="!detailOf(record)">
+            <NightlyDayDetail
+              v-if="detailOf(record)"
+              :day="record"
+              :detail="detailOf(record)"
+              @open-run="(p) => emit('open-run', p)"
+            />
+          </a-spin>
+        </template>
+      </DataTable>
+    </div>
 
     <a-modal
       v-model:open="runModal.open"
@@ -355,8 +357,13 @@ onBeforeUnmount(stopRunPolling)
   height: 100%;
   min-height: 0;
   overflow: auto;
-  padding: 16px 24px;
+  padding: 24px;
   box-sizing: border-box;
+}
+/* 宽度约束对齐知识库列表页（KnowledgeStats .stats-content）：封顶 1100px 居中，宽屏下不再拉满 */
+.nightly-content {
+  max-width: 1100px;
+  margin: 0 auto;
 }
 /* 工具条式布局（对齐知识库列表页的留白）：状态信息居左、操作靠右，与表格拉开呼吸间距 */
 .nightly-schedule {
