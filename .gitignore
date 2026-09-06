@@ -39,6 +39,7 @@ apps/*/public/wasm/
 .idea/
 .trae/
 .opencode/
+.mimosa/
 .DS_Store
 AGENTS.md
 
