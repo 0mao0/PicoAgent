@@ -11,23 +11,6 @@
       storage-key="angineer-nightly-v2"
       @expand="handleExpand"
     >
-      <template #toolbar v-if="latest">
-        <div class="nightly-latest">
-          <a-space size="middle" wrap>
-            <a-tag :color="stateColor(latest.state)">{{ stateLabel(latest.state) }}</a-tag>
-            <span class="nightly-metric">{{ fmtTime(latest.generated_at) }}</span>
-            <span class="nightly-metric">平均分 <b>{{ pct(latest.overall_score) }}</b></span>
-            <span class="nightly-metric">题量 {{ latest.correct ?? '?' }}/{{ latest.total ?? '?' }}</span>
-            <span class="nightly-metric">基线 <b>{{ baselinePct(latest) }}</b></span>
-            <span class="nightly-metric">Δ <b>{{ deltaText(latest) }}</b></span>
-            <span class="nightly-metric">judge 异常 {{ latest.judge_failed_count ?? '—' }}</span>
-          </a-space>
-          <a-button v-if="latest.run_id" size="small" type="link" @click="emitOpen(latest)">
-            在日常测试中打开
-          </a-button>
-        </div>
-      </template>
-
       <template #headerCell="{ column }">
         <template v-if="column.key === 'delta'">
           基线
@@ -57,7 +40,12 @@
 
       <template #expandedRowRender="{ record }">
         <a-spin :spinning="!detailOf(record)">
-          <NightlyDayDetail v-if="detailOf(record)" :day="record" :detail="detailOf(record)" />
+          <NightlyDayDetail
+            v-if="detailOf(record)"
+            :day="record"
+            :detail="detailOf(record)"
+            @open-run="(p) => emit('open-run', p)"
+          />
         </a-spin>
       </template>
     </DataTable>
@@ -65,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { DataTable } from '@angineer/table-ui'
@@ -97,15 +85,11 @@ interface NightlyDayDetailData {
   report_md?: string
 }
 
-const DEFAULT_NIGHTLY_DATASET = 'open-ragbench-subset-v2'
-
 const emit = defineEmits<{ (e: 'open-run', payload: { datasetId: string; runId: string }): void }>()
 
 const loading = ref(false)
 const days = ref<NightlyDay[]>([])
 const details = ref<Record<string, NightlyDayDetailData>>({})
-
-const latest = computed(() => days.value[0])
 
 const EMPTY_TEXT = '暂无夜间维护记录 —— nightly 评测流程每晚运行后自动在此发布门禁结论'
 
@@ -142,10 +126,6 @@ const fmtTime = (iso?: string) => {
   })
 }
 
-/** 基线本体分数（基线列展示的是差值，这里给差值的参照物） */
-const baselinePct = (day: NightlyDay) =>
-  day.overall_score != null && day.delta != null ? pct(day.overall_score - day.delta) : '—'
-
 /** 老数据没有 verdict 字段时按状态兜底生成一句话（措辞与发布端 _verdict 同风格，面向普通读者） */
 const fallbackVerdict = (day: NightlyDay) => {
   if (day.state === 'error' || day.state === 'corrupt') return '评测中断，未出结果'
@@ -168,11 +148,6 @@ const loadDetail = async (date: string) => {
   } catch (e) {
     details.value[date] = { nightly: { date, state: 'corrupt', note: String((e as Error).message || '读取失败') } }
   }
-}
-
-const emitOpen = (day: NightlyDay) => {
-  if (!day.run_id) return
-  emit('open-run', { datasetId: day.dataset_id || DEFAULT_NIGHTLY_DATASET, runId: day.run_id })
 }
 
 const fetchList = async () => {
@@ -198,23 +173,6 @@ onMounted(fetchList)
   overflow: auto;
   padding: 12px 16px;
   box-sizing: border-box;
-}
-.nightly-latest {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  width: 100%;
-  box-sizing: border-box;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  border: 1px solid var(--border-color, rgba(5, 5, 5, 0.06));
-  border-radius: 8px;
-  background: var(--card-bg, var(--bg-primary, #fff));
-}
-.nightly-metric {
-  white-space: nowrap;
 }
 .nightly-help {
   margin-left: 4px;

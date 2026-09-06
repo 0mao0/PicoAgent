@@ -13,6 +13,15 @@
       </div>
       <div class="ndd-analysis">
         <p v-for="(line, i) in analysisLines" :key="i" class="ndd-analysis__line">{{ line }}</p>
+        <a-button
+          v-if="cur.run_id"
+          class="ndd-open-run"
+          size="small"
+          type="link"
+          @click="$emit('open-run', { datasetId: cur.dataset_id || DEFAULT_NIGHTLY_DATASET, runId: cur.run_id })"
+        >
+          在日常测试中打开本次运行
+        </a-button>
         <a-alert
           v-for="(reason, i) in cur.gate_reasons || []"
           :key="`r${i}`"
@@ -99,13 +108,20 @@ interface NightlyDayLite {
   matrix?: NightlyMatrix
   verdict?: string
   note?: string
+  run_id?: string
+  dataset_id?: string
+  judge_failed_count?: number
   gate_reasons?: string[]
   regressions?: Record<string, string>
   regression_items?: QuestionItem[]
   fixed_items?: QuestionItem[]
 }
 
+const DEFAULT_NIGHTLY_DATASET = 'open-ragbench-subset-v2'
+
 const props = defineProps<{ day: NightlyDayLite; detail?: { nightly?: NightlyDayLite; report_md?: string } }>()
+
+defineEmits<{ (e: 'open-run', payload: { datasetId: string; runId: string }): void }>()
 
 /** 归因机读码 → 大白话（机读码来自 compare_runs.attribute()，原始串留 tooltip） */
 const BUCKET_PLAIN: Record<string, string> = {
@@ -139,12 +155,13 @@ const chips = computed(() => {
   ]
 })
 
-/** 分行结论：一行一件事，不写门禁等内部术语 */
+/** 分行结论：一行一件事，不写门禁等内部术语；基线参照分写进差值句，不再单独展示 */
 const analysisLines = computed<string[]>(() => {
   const day = cur.value
   if (day.state === 'error') return [day.note || '评测中断，未产出结果。']
   const dir = (day.delta ?? 0) >= 0 ? '高' : '低'
-  const lines = [`今晚答对 ${pct(day.overall_score)}，比基线${dir} ${(Math.abs(day.delta ?? 0) * 100).toFixed(2)} 个百分点。`]
+  const baseRef = day.overall_score != null && day.delta != null ? `（${pct(day.overall_score - day.delta)}）` : ''
+  const lines = [`今晚答对 ${pct(day.overall_score)}，比基线${baseRef}${dir} ${(Math.abs(day.delta ?? 0) * 100).toFixed(2)} 个百分点。`]
   const m = day.matrix || {}
   if (m.pf != null || m.fp != null) {
     lines.push(`答对变答错 ${m.fp ?? '—'} 题，答错变答对 ${m.pf ?? '—'} 题。`)
@@ -152,6 +169,9 @@ const analysisLines = computed<string[]>(() => {
   lines.push(day.state === 'red'
     ? '整体明显变差，需要排查下方回退题目。'
     : '整体没有变差，正常波动。')
+  if (day.judge_failed_count) {
+    lines.push(`评判环节抖动 ${day.judge_failed_count} 题，已自动补判。`)
+  }
   return lines
 })
 
@@ -276,6 +296,10 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 22px;
   color: var(--text-primary, rgba(0, 0, 0, 0.85));
+}
+.ndd-open-run {
+  align-self: flex-start;
+  padding-left: 0;
 }
 .ndd-alert {
   margin-top: 2px;
