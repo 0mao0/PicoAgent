@@ -391,9 +391,10 @@ async def get_nightly_settings():
 
 @evals_router.put("/nightly/settings", dependencies=[Depends(require_admin_session)])
 async def put_nightly_settings(payload: Dict[str, Any]):
-    """保存每晚执行时间（北京时间）与启用开关；调度器 1 分钟内生效。"""
+    """保存每晚执行时间（北京时间）与启用开关；调度器 1 分钟内生效。
+    与现有配置合并：UI 只传展示字段，dataset/超时等高级项不被重置。"""
     try:
-        cfg = nightly_control.normalize_settings(payload)
+        cfg = nightly_control.normalize_settings({**nightly_control.load_settings(), **payload})
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     cfg["last_dispatch"] = nightly_control.load_settings().get("last_dispatch")
@@ -422,14 +423,12 @@ async def get_nightly_day(date: str):
 
 @evals_router.post("/nightly/run-now", dependencies=[Depends(require_admin_session)])
 async def post_nightly_run_now():
-    """立即触发一次 eval-nightly workflow_dispatch（评测本身仍全走 workflow 链路）。"""
-    result = await asyncio.to_thread(nightly_control.dispatch_github, "manual")
-    cfg = nightly_control.record_dispatch(
-        nightly_control.load_settings(), _dt.now(_tz.utc), "manual", result)
+    """立即后台跑一轮全内置流水线（评测→补判→门禁→落盘结论→企微），结果异步出。"""
+    started = await nightly_control.launch("manual")
     return {
-        "ok": bool(result.get("ok")),
-        "detail": str(result.get("detail") or ""),
-        "at": cfg["last_dispatch"]["at"],
+        "ok": bool(started.get("ok")),
+        "detail": str(started.get("detail") or ""),
+        "at": started.get("started_at") or "",
     }
 
 

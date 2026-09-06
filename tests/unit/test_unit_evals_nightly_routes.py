@@ -147,18 +147,30 @@ class NightlyRoutesTests(unittest.TestCase):
             self.assertIn('"hour": 2', settings_file.read_text(encoding="utf-8"))
             self.assertEqual(c.put("/api/evals/nightly/settings", json={"hour": 24}).status_code, 400)
 
-    def test_run_now_dispatches_manual(self):
+    def test_run_now_launches_pipeline_contract(self):
+        # 路由契约：转调 nightly_control.launch("manual") 并透传启动结果；
+        # launch/流水线的行为在 test_unit_nightly_control / nightly_pipeline 覆盖
         import nightly_control
-        settings_file = self.eval_dir / "nightly_settings.json"
-        with self._settings_env(), \
-             mock.patch.object(nightly_control, "dispatch_github", return_value={"ok": True, "detail": ""}) as dispatched, \
-             _patch_auth(True, is_admin=True):
+        with self._settings_env(), mock.patch.object(
+            nightly_control, "launch",
+            new=mock.AsyncMock(return_value={"ok": True, "started_at": "2026-09-06T13:00:00+08:00", "detail": "started"}),
+        ) as launched, _patch_auth(True, is_admin=True):
             r = self._client().post("/api/evals/nightly/run-now")
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json()["ok"])
-        self.assertEqual(dispatched.call_args[0][0], "manual")
-        stored = json.loads(settings_file.read_text(encoding="utf-8"))
-        self.assertEqual(stored["last_dispatch"]["source"], "manual")
+        self.assertEqual(r.json()["at"], "2026-09-06T13:00:00+08:00")
+        self.assertEqual(launched.await_args[0][0], "manual")
+
+    def test_run_now_reports_busy(self):
+        import nightly_control
+        with self._settings_env(), mock.patch.object(
+            nightly_control, "launch",
+            new=mock.AsyncMock(return_value={"ok": False, "started_at": "", "detail": "已有一条夜间流水线在运行，请等待其完成"}),
+        ), _patch_auth(True, is_admin=True):
+            r = self._client().post("/api/evals/nightly/run-now")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()["ok"])
+        self.assertIn("运行", r.json()["detail"])
 
 
 if __name__ == "__main__":
