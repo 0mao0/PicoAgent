@@ -23,6 +23,8 @@ jobs:
     env:
       AICHAT: http://127.0.0.1:8791
       OUT_DIR: evals-nightly
+      SITE_URL: https://angineer.cn/admin/evals?view=nightly
+      NIGHTLY_DATA: /home/runner/AnGIneer/data/evals/nightly
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +66,15 @@ jobs:
           python3 scripts/open_ragbench/compare_runs.py compare \
             --base baseline --new "$OUT_DIR/raw.json" --out "$OUT_DIR/gate.md"
 
+      - name: Publish nightly artifacts (site 夜间维护)
+        if: always()
+        run: |
+          python3 scripts/open_ragbench/publish_nightly.py \
+            --artifacts "$OUT_DIR" \
+            --target "$NIGHTLY_DATA" \
+            --dataset-id open-ragbench-subset-v2 \
+            --error-note "eval=${{ steps.eval.conclusion }} report=${{ steps.report.conclusion }} gate=${{ steps.gate.conclusion }}"
+
       - name: Notify WeCom (always)
         if: always()
         env:
@@ -74,6 +85,7 @@ jobs:
             --raw "$OUT_DIR/raw.json" --gate "$OUT_DIR/gate.json" \
             --gate-state "${{ steps.gate.conclusion }}" \
             --error-note "eval=${{ steps.eval.conclusion }} report=${{ steps.report.conclusion }} gate=${{ steps.gate.conclusion }}" \
+            --site-url "$SITE_URL" \
             --run-url "$RUN_URL"
 
       - name: Upload artifacts (always)

@@ -87,6 +87,7 @@ def main() -> int:
     parser.add_argument("--gate-state", default="skipped", help="门禁 step conclusion：success/failure/skipped")
     parser.add_argument("--error-note", default="")
     parser.add_argument("--run-url", default="")
+    parser.add_argument("--site-url", default="", help="站点夜间维护视图地址（缺省时只给运行日志链接）")
     args = parser.parse_args()
 
     state = _STATE_BY_CONCLUSION.get(args.gate_state, STATE_ERROR)
@@ -104,8 +105,13 @@ def main() -> int:
     if state == STATE_ERROR and not note and raw is None:
         note = "未产出评测结果文件（评测步骤可能中途失败；后端 run 可能仍在执行，可查 evals 库）"
     text = build_message(raw, gate, state, note)
+    links = []
+    if args.site_url:
+        links.append(f"[夜间维护]({args.site_url})")
     if args.run_url:
-        text += f"\n查看：[日志与产物]({args.run_url})"
+        links.append(f"[运行日志]({args.run_url})")
+    if links:
+        text += "\n查看：" + "｜".join(links)
     webhook = os.environ.get("WEBHOOK", "").strip()
     if not webhook:
         print("WEBHOOK 未配置，跳过推送:\n" + text)
