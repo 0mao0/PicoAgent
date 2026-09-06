@@ -43,9 +43,13 @@ def _answer_usable(messages: List[AgentMessage]) -> bool:
 _META_NON_ANSWER_PATTERNS = (
     "不包含", "不涵盖", "未包含", "未涵盖", "没有收录",
     "仅提供", "仅涵盖", "仅统计",
+    # 统计 prompt 固定拒答话术（"统计维度暂不支持…仅负责…无法提供具体标题"）：
+    # 守卫名单与 prompt 话术必须同步，否则误入 meta 通道的内容题不会被回退 L1（2026-09-06 复盘）
+    "暂不支持", "仅负责", "只负责", "无法提供",
     "do not contain", "does not contain", "not contain information",
     "only provides metadata", "only covers", "only includes metadata",
     "no information about", "not available in the knowledge base",
+    "dimension is not supported", "only handles metadata",
 )
 
 
