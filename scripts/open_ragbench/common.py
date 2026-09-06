@@ -1,8 +1,15 @@
 """共享路径、常量、端点与 JSON 读写。"""
 import json
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# nightly 算法真相源在 evals-core（scripts 侧 CLI 只做文件/HTTP 薄胶水），
+# 这里统一把包源码目录挂进 sys.path，脚本可 `from evals_core.nightly import ...`
+EVALS_CORE_SRC = REPO_ROOT / "services" / "evals-core" / "src"
+if str(EVALS_CORE_SRC) not in sys.path:
+    sys.path.insert(0, str(EVALS_CORE_SRC))
 DATA_DIR = REPO_ROOT / "data" / "open_ragbench"
 RAW_DIR = DATA_DIR / "raw"
 PDF_DIR = DATA_DIR / "pdfs"
