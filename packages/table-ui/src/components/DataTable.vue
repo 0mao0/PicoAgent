@@ -463,9 +463,10 @@ function emitQuery(): void {
   display: none;
 }
 
-// 表头居中
+// 表头居中。必须 !important：antd cssinjs 给 th 注入 text-align:start 的特异性
+// 高于 scoped 编译产物（实测 computed 为 start），常规覆盖无效——只影响表头对齐，无副作用面。
 .data-table__table :deep(th) {
-  text-align: center;
+  text-align: center !important;
 }
 
 // 整行热区展开：行级指针光标提示可点击
