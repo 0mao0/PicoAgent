@@ -401,6 +401,11 @@ def _run_questions_concurrent(
                 prepared["config_name"] = config_name
 
             def _task(prep: Dict[str, Any], names, override, qid: str = question_id):
+                # 停止命令后仍在池队列里的任务：不执行、不改状态行（保持 pending
+                # 待评测）、不计进度。旧实现停止信号只在 submit 循环检查，全部题
+                # 早已入池，并发模式点"停止评测"形同虚设（2026-09-06 用户实踩）。
+                if stop_event.is_set():
+                    return qid, {"skipped_by_stop": True}
                 # running 状态必须如实反映"真正开始执行"：线程池分配到 worker 时才写。
                 # 旧实现在 submit 循环就为全部排队题预写 running，池子只放行 N 个执行，
                 # 页面因此"全部评测中"、实时统计失真（2026-09-06 用户实踩）。
@@ -425,6 +430,8 @@ def _run_questions_concurrent(
                 _, result = future.result()
             except Exception as exc:  # noqa: BLE001
                 result = {"status": "error", "error": str(exc), "scores": {}}
+            if result.get("skipped_by_stop"):
+                continue  # 停止后未执行的排队题：保持 pending，不计进度
             result_store.update_run_detail(run_id, question_id, {
                 "status": result.get("status", "error"),
                 "quality": result.get("quality"),
@@ -438,6 +445,19 @@ def _run_questions_concurrent(
             executed += 1
             result_store.update_run_progress(run_id, pre_done_count + executed)
     return executed
+
+
+def _finish_cancelled(run_id: str, questions: List[Dict[str, Any]]) -> None:
+    """收到停止信号后的统一结算：按已完成部分计算汇总并标记 run 为已取消。
+    并发/串行两路共用——旧实现并发路径停止后落回 complete_run，
+    取消的评测被记成"完成"。"""
+    details = result_store.list_run_details(run_id)
+    enriched_details = []
+    for d in details:
+        q = next((q for q in questions if str(q.get("question_id") or "") == d["question_id"]), {})
+        enriched_details.append(_enrich_detail_with_question(d, q))
+    summary = _compute_summary(enriched_details)
+    result_store.cancel_run(run_id, summary)
 
 
 def _run_suite_thread(
@@ -504,20 +524,15 @@ def _run_suite_thread(
                 config_name=config_name,
                 rescore_map=rescore_map,
             )
+            if _stop_event.is_set():
+                _finish_cancelled(run_id, questions)
+                return
         else:
             evaluators = _build_evaluators()
             for idx, question in enumerate(questions):
                 # 检查是否收到停止信号（在每道题目开始前检查）
                 if _stop_event.is_set():
-                    # 优雅退出：计算已完成的汇总指标并标记为已取消
-                    details = result_store.list_run_details(run_id)
-                    enriched_details = []
-                    for d in details:
-                        q = next((q for q in questions if str(q.get("question_id") or "") == d["question_id"]), {})
-                        enriched = _enrich_detail_with_question(d, q)
-                        enriched_details.append(enriched)
-                    summary = _compute_summary(enriched_details)
-                    result_store.cancel_run(run_id, summary)
+                    _finish_cancelled(run_id, questions)
                     return
 
                 question_id = str(question.get("question_id") or "")
