@@ -79,6 +79,10 @@ export function useEvalRun() {
         body: JSON.stringify(body),
       })
       if (resp.ok) {
+        // 新 run 从零开始：清空上一轮的逐题映射与单题评测集合。
+        // 不清会导致新 run 轮询合并时残留上一轮的质量标记（跨 run 幽灵数据）。
+        runDetails.value = new Map()
+        evaluatingQuestionIds.value = new Set()
         currentRun.value = await resp.json()
         runs.value = [currentRun.value!, ...runs.value.filter(r => r.run_id !== currentRun.value!.run_id)]
         startPolling(currentRun.value!.run_id)

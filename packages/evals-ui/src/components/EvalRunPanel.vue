@@ -301,8 +301,36 @@ const isRunning = computed(() => {
   return !!props.runs?.some(r => r.status === 'running')
 })
 
+/** 运行中 run 的实况明细：跟随父级轮询（completed_questions 变化）拉取；
+ * 运行中的实时统计必须由"本次 run 的真实进度"派生——旧实现回退 lastRun.summary_scores，
+ * 新评测 0/25 时半圆会显示上一轮的百分比与对错数（2026-09-06 实踩幽灵数据）。 */
+const runLiveDetails = ref<EvalRunDetail[]>([])
+watch(
+  () => [props.currentRun?.run_id, props.currentRun?.completed_questions] as const,
+  async () => {
+    const run = props.currentRun
+    if (run?.status === 'running' && props.loadRunDetails) {
+      runLiveDetails.value = await props.loadRunDetails(run.run_id)
+    } else if (run?.status !== 'running') {
+      runLiveDetails.value = []
+    }
+  },
+  { immediate: true },
+)
+
 /** 当前展示的汇总得分 */
 const summary = computed((): EvalSummaryScores | null => {
+  if (props.isFullRun && props.currentRun?.status === 'running') {
+    let correct = 0, wrong = 0, errored = 0
+    for (const d of runLiveDetails.value) {
+      if (d.status === 'error' || d.error) { errored++; continue }
+      if (d.status !== 'completed') continue
+      if (d.quality === 'correct') correct++
+      else if (d.quality === 'wrong') wrong++
+    }
+    const done = correct + wrong
+    return { overall_score: done ? correct / done : 0, total: done, correct, wrong, skipped: errored, errored }
+  }
   if (props.isFullRun) {
     return props.currentRun?.summary_scores || props.lastRun?.summary_scores || null
   }

@@ -399,20 +399,24 @@ def _run_questions_concurrent(
                 prepared["doc_ids"] = override_doc_ids
             if config_name:
                 prepared["config_name"] = config_name
-            result_store.delete_run_detail(run_id, question_id)
-            result_store.insert_run_detail({
-                "run_id": run_id,
-                "question_id": question_id,
-                "status": "running",
-            })
 
-            def stage_callback(partial_prediction: Dict[str, Any], qid: str = question_id) -> None:
-                result_store.update_run_detail(run_id, qid, {"prediction": partial_prediction})
+            def _task(prep: Dict[str, Any], names, override, qid: str = question_id):
+                # running 状态必须如实反映"真正开始执行"：线程池分配到 worker 时才写。
+                # 旧实现在 submit 循环就为全部排队题预写 running，池子只放行 N 个执行，
+                # 页面因此"全部评测中"、实时统计失真（2026-09-06 用户实踩）。
+                result_store.delete_run_detail(run_id, qid)
+                result_store.insert_run_detail({
+                    "run_id": run_id,
+                    "question_id": qid,
+                    "status": "running",
+                })
 
-            future = pool.submit(
-                _run_one_worker, prepared, evaluator_names, stage_callback,
-                (rescore_map or {}).get(question_id),
-            )
+                def stage_callback(partial_prediction: Dict[str, Any], _qid: str = qid) -> None:
+                    result_store.update_run_detail(run_id, _qid, {"prediction": partial_prediction})
+
+                return _run_one_worker(prep, names, stage_callback, override)
+
+            future = pool.submit(_task, prepared, evaluator_names, (rescore_map or {}).get(question_id))
             pending[future] = question_id
 
         for future in as_completed(pending):
@@ -472,6 +476,20 @@ def _run_suite_thread(
 
     try:
         total = len(questions)
+        # 状态机预写：本次要执行的题先落 pending（排队中）明细行，worker 真正开始
+        # 才升 running、跑完升 completed——三态如实。旧实现 submit 循环即为全部题
+        # 预写 running，池子只放行 N 个执行，页面"25 题全评测中"无从分辨进度
+        # （2026-09-06 用户实踩）。pre_done 题由下方既有分支按完成态复用，不预写。
+        for question in questions:
+            qid = str(question.get("question_id") or "")
+            if qid in pre_done:
+                continue
+            result_store.delete_run_detail(run_id, qid)
+            result_store.insert_run_detail({
+                "run_id": run_id,
+                "question_id": qid,
+                "status": "pending",
+            })
         workers = _eval_concurrency()
         if workers > 1:
             executed = _run_questions_concurrent(
