@@ -2,7 +2,7 @@
   <!-- 夜间维护：nightly 门禁结果的历史与明细（数据源 data/evals/nightly/，仅管理员） -->
   <div class="eval-nightly-panel">
     <div class="nightly-schedule">
-      <a-space size="small" wrap>
+      <div class="nightly-schedule__group">
         <span class="nightly-schedule__label">每晚定时执行（北京时间）</span>
         <a-switch v-model:checked="sched.enabled" size="small" />
         <a-time-picker
@@ -19,7 +19,7 @@
           </a-button>
           <a-button size="small" @click="cancelSchedule">取消</a-button>
         </template>
-      </a-space>
+      </div>
       <a-button size="small" :disabled="sched.running" @click="openRunModal">
         {{ sched.running ? '流水线运行中…' : '立即运行' }}
       </a-button>
@@ -367,6 +367,13 @@ onBeforeUnmount(stopRunPolling)
   flex-wrap: wrap;
   min-height: 32px;
   margin-bottom: 20px;
+}
+/* 左组自排 flex 垂直居中（a-space 的行盒基线会把不同高度控件排歪，实测中心差 4px） */
+.nightly-schedule__group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .nightly-schedule__label,
 .nightly-schedule__status {
