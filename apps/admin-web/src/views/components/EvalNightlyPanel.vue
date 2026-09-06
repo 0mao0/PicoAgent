@@ -1,100 +1,93 @@
 <template>
   <!-- 夜间维护：nightly 门禁结果的历史与明细（数据源 data/evals/nightly/，仅管理员） -->
   <div class="eval-nightly-panel">
-    <a-spin :spinning="loading">
-      <a-empty
-        v-if="!loading && !days.length"
-        class="nightly-empty"
-        description="暂无夜间维护记录 —— nightly 评测流程每晚运行后自动在此发布门禁结论"
-      />
-      <template v-else>
-        <a-card v-if="latest" size="small" class="nightly-latest">
-          <div class="nightly-latest__row">
-            <a-space size="middle" wrap>
-              <a-tag :color="stateColor(latest.state)">{{ stateLabel(latest.state) }}</a-tag>
-              <span class="nightly-metric">最新 {{ latest.date }}</span>
-              <span class="nightly-metric">Overall <b>{{ pct(latest.overall_score) }}</b></span>
-              <span class="nightly-metric">正确 {{ latest.correct ?? '?' }}/{{ latest.total ?? '?' }}</span>
-              <span class="nightly-metric">Δ 基线 <b>{{ deltaText(latest) }}</b></span>
-              <span class="nightly-metric">judge 异常 {{ latest.judge_failed_count ?? '—' }}</span>
-            </a-space>
-            <a-button v-if="latest.run_id" size="small" type="link" @click="emitOpen(latest)">
-              在日常测试中打开
-            </a-button>
-          </div>
-        </a-card>
-
-        <a-table
-          class="nightly-table"
-          :data-source="days"
-          :columns="columns"
-          row-key="date"
-          size="small"
-          :pagination="false"
-          @expand="(expanded: boolean, record: NightlyDay) => expanded && loadDetail(record.date)"
-        >
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'state'">
-              <a-tag :color="stateColor(record.state)">{{ stateLabel(record.state) }}</a-tag>
-            </template>
-            <template v-else-if="column.key === 'overall'">
-              {{ pct(record.overall_score) }}
-            </template>
-            <template v-else-if="column.key === 'delta'">
-              {{ deltaText(record) }}
-            </template>
-          </template>
-          <template #expandedRowRender="{ record }">
-            <a-spin :spinning="!detailOf(record)">
-              <div v-if="detailOf(record)" class="nightly-detail">
-                <a-alert
-                  v-for="(reason, idx) in detailOf(record)?.nightly?.gate_reasons || []"
-                  :key="idx"
-                  type="error"
-                  :message="reason"
-                  show-icon
-                  class="nightly-reason"
-                />
-                <a-alert
-                  v-if="detailOf(record)?.nightly?.note"
-                  type="warning"
-                  :message="`执行记录：${detailOf(record)?.nightly?.note}`"
-                  show-icon
-                  class="nightly-reason"
-                />
-                <a-descriptions v-if="matrixOf(record)" size="small" bordered :column="4" class="nightly-matrix">
-                  <a-descriptions-item label="双过">{{ matrixOf(record)?.pp }}</a-descriptions-item>
-                  <a-descriptions-item label="新修复">{{ matrixOf(record)?.pf }}</a-descriptions-item>
-                  <a-descriptions-item label="新回退">{{ matrixOf(record)?.fp }}</a-descriptions-item>
-                  <a-descriptions-item label="双挂">{{ matrixOf(record)?.ff }}</a-descriptions-item>
-                </a-descriptions>
-                <div v-if="regressionRows(record).length" class="nightly-regressions">
-                  <div class="nightly-block-title">回退归因（旧过新挂）</div>
-                  <a-table
-                    :data-source="regressionRows(record)"
-                    :columns="regressionColumns"
-                    row-key="qid"
-                    size="small"
-                    :pagination="false"
-                  />
-                </div>
-                <a-collapse v-if="detailOf(record)?.report_md" class="nightly-report">
-                  <a-collapse-panel key="report" header="评测报告（report.md）">
-                    <pre class="nightly-report__raw">{{ detailOf(record)?.report_md }}</pre>
-                  </a-collapse-panel>
-                </a-collapse>
-              </div>
-            </a-spin>
-          </template>
-        </a-table>
+    <DataTable
+      :columns="columns"
+      :data-source="days"
+      row-key="date"
+      :loading="loading"
+      :expandable="{ onExpand: handleExpand }"
+      :empty-text="EMPTY_TEXT"
+      storage-key="angineer-nightly-v1"
+    >
+      <template #toolbar v-if="latest">
+        <div class="nightly-latest">
+          <a-space size="middle" wrap>
+            <a-tag :color="stateColor(latest.state)">{{ stateLabel(latest.state) }}</a-tag>
+            <span class="nightly-metric">最新 {{ latest.date }}</span>
+            <span class="nightly-metric">Overall <b>{{ pct(latest.overall_score) }}</b></span>
+            <span class="nightly-metric">正确 {{ latest.correct ?? '?' }}/{{ latest.total ?? '?' }}</span>
+            <span class="nightly-metric">Δ 基线 <b>{{ deltaText(latest) }}</b></span>
+            <span class="nightly-metric">judge 异常 {{ latest.judge_failed_count ?? '—' }}</span>
+          </a-space>
+          <a-button v-if="latest.run_id" size="small" type="link" @click="emitOpen(latest)">
+            在日常测试中打开
+          </a-button>
+        </div>
       </template>
-    </a-spin>
+
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'state'">
+          <a-tag :color="stateColor(record.state)">{{ stateLabel(record.state) }}</a-tag>
+        </template>
+        <template v-else-if="column.key === 'overall'">
+          {{ pct(record.overall_score) }}
+        </template>
+        <template v-else-if="column.key === 'delta'">
+          {{ deltaText(record) }}
+        </template>
+      </template>
+
+      <template #expandedRowRender="{ record }">
+        <a-spin :spinning="!detailOf(record)">
+          <div v-if="detailOf(record)" class="nightly-detail">
+            <a-alert
+              v-for="(reason, idx) in detailOf(record)?.nightly?.gate_reasons || []"
+              :key="idx"
+              type="error"
+              :message="reason"
+              show-icon
+              class="nightly-reason"
+            />
+            <a-alert
+              v-if="detailOf(record)?.nightly?.note"
+              type="warning"
+              :message="`执行记录：${detailOf(record)?.nightly?.note}`"
+              show-icon
+              class="nightly-reason"
+            />
+            <a-descriptions v-if="matrixOf(record)" size="small" bordered :column="4" class="nightly-matrix">
+              <a-descriptions-item label="双过">{{ matrixOf(record)?.pp }}</a-descriptions-item>
+              <a-descriptions-item label="新修复">{{ matrixOf(record)?.pf }}</a-descriptions-item>
+              <a-descriptions-item label="新回退">{{ matrixOf(record)?.fp }}</a-descriptions-item>
+              <a-descriptions-item label="双挂">{{ matrixOf(record)?.ff }}</a-descriptions-item>
+            </a-descriptions>
+            <div v-if="regressionRows(record).length" class="nightly-regressions">
+              <div class="nightly-block-title">回退归因（旧过新挂）</div>
+              <DataTable
+                :columns="regressionColumns"
+                :data-source="regressionRows(record)"
+                row-key="qid"
+                :card="false"
+              />
+            </div>
+            <a-collapse v-if="detailOf(record)?.report_md" class="nightly-report">
+              <a-collapse-panel key="report" header="评测报告（report.md）">
+                <pre class="nightly-report__raw">{{ detailOf(record)?.report_md }}</pre>
+              </a-collapse-panel>
+            </a-collapse>
+          </div>
+        </a-spin>
+      </template>
+    </DataTable>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
+import { DataTable } from '@angineer/table-ui'
+import type { DataTableColumn } from '@angineer/table-ui'
 import evalsApi from '../../api/evals'
 
 interface NightlyMatrix {
@@ -138,21 +131,27 @@ const details = ref<Record<string, NightlyDayDetail>>({})
 
 const latest = computed(() => days.value[0])
 
-const columns = [
-  { title: '日期', dataIndex: 'date', key: 'date', width: 120 },
-  { title: '结论', dataIndex: 'state', key: 'state', width: 90 },
-  { title: 'Overall', key: 'overall', width: 90 },
-  { title: '正确', key: 'correct', width: 100,
+const EMPTY_TEXT = '暂无夜间维护记录 —— nightly 评测流程每晚运行后自动在此发布门禁结论'
+
+const columns: DataTableColumn[] = [
+  { title: '日期', dataIndex: 'date', key: 'date', width: 120, minWidth: 100 },
+  { title: '结论', dataIndex: 'state', key: 'state', width: 90, minWidth: 70 },
+  { title: 'Overall', key: 'overall', width: 90, minWidth: 80 },
+  { title: '正确', key: 'correct', width: 100, minWidth: 80,
     customRender: ({ record }: { record: NightlyDay }) =>
       record.correct != null && record.total != null ? `${record.correct}/${record.total}` : '—' },
-  { title: 'Δ 基线', key: 'delta', width: 100 },
-  { title: '基线', dataIndex: 'base_label', key: 'base_label', ellipsis: true },
+  { title: 'Δ 基线', key: 'delta', width: 100, minWidth: 80 },
+  { title: '基线', dataIndex: 'base_label', key: 'base_label', width: 240, minWidth: 140, flex: true, resizable: true, ellipsis: true },
 ]
 
-const regressionColumns = [
+const regressionColumns: DataTableColumn[] = [
   { title: '题目', dataIndex: 'qid', key: 'qid', width: 140 },
-  { title: '归因', dataIndex: 'bucket', key: 'bucket' },
+  { title: '归因', dataIndex: 'bucket', key: 'bucket', width: 260, minWidth: 160, flex: true, resizable: true },
 ]
+
+const handleExpand = (expanded: boolean, record: NightlyDay) => {
+  if (expanded) loadDetail(record.date)
+}
 
 const stateColor = (state: string) =>
   ({ green: 'success', red: 'error', error: 'warning', corrupt: 'default' }[state] || 'default')
@@ -210,18 +209,18 @@ onMounted(fetchList)
   padding: 12px 16px;
   box-sizing: border-box;
 }
-.nightly-empty {
-  margin-top: 15vh;
-}
 .nightly-latest {
-  margin-bottom: 12px;
-}
-.nightly-latest__row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, rgba(5, 5, 5, 0.06));
+  border-radius: 8px;
+  background: var(--card-bg, var(--bg-primary, #fff));
 }
 .nightly-metric {
   white-space: nowrap;
