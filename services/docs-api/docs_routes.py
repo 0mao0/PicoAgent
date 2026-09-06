@@ -315,6 +315,11 @@ def get_knowledge_stats(library_id: Optional[str] = None):
             " ORDER BY s.page_count ASC LIMIT 1",
             lib_params,
         ).fetchone()
+        # 标题清单：供 agent meta_query 通道回答"有哪些文章/规范"类列举型元数据问题
+        title_rows = conn.execute(
+            f"SELECT title, status FROM nodes WHERE deleted=0{lib_clause} ORDER BY title LIMIT 101",
+            lib_params,
+        ).fetchall()
 
     # parse_records 是独立 SQLite 文件，单独连接聚合（不与 meta 库跨库 JOIN）
     rconn = sqlite3.connect(RECORDS_DB_PATH)
@@ -359,6 +364,9 @@ def get_knowledge_stats(library_id: Optional[str] = None):
             "deleted": deleted,
             "by_status": by_status,
             "by_library": by_library,
+            "titles_total": total,
+            "titles_truncated": len(title_rows) > 100,
+            "titles": [{"title": r[0], "status": r[1]} for r in title_rows[:100]],
         },
         "uploads": {
             "recent_7d": recent_7d,

@@ -791,6 +791,12 @@ def _local_knowledge_stats(library_id: Optional[str] = None) -> Dict[str, Any]:
             " ORDER BY s.page_count ASC LIMIT 1",
             lib_params,
         ).fetchone()
+        # 标题清单：供 meta_query 通道回答"有哪些文章/规范"类列举型元数据问题
+        # （与 docs-api GET /api/knowledge/stats 的 documents.titles 口径保持一致）
+        title_rows = conn.execute(
+            f"SELECT title, status FROM nodes WHERE deleted=0{lib_clause} ORDER BY title LIMIT 101",
+            lib_params,
+        ).fetchall()
     finally:
         conn.close()
 
@@ -835,6 +841,9 @@ def _local_knowledge_stats(library_id: Optional[str] = None) -> Dict[str, Any]:
             "deleted": deleted,
             "by_status": by_status,
             "by_library": by_library,
+            "titles_total": total,
+            "titles_truncated": len(title_rows) > 100,
+            "titles": [{"title": r[0], "status": r[1]} for r in title_rows[:100]],
         },
         "uploads": {
             "recent_7d": recent_7d,
@@ -876,7 +885,12 @@ class StatsAdapter:
 
         return AgentTool(
             name="knowledge_stats",
-            description="查询知识库的统计信息：文档总数、各状态/各库分布、上传趋势（近7天/30天/按月）、文件格式分布、总页数与平均页数、存储占用。当用户询问知识库规模、数量、分布、趋势等元数据问题时使用，直接基于返回的数字回答。",
+            description=(
+                "查询知识库的统计信息：文档总数、各状态/各库分布、上传趋势（近7天/30天/按月）、"
+                "文件格式分布、总页数与平均页数、存储占用，以及文档标题清单（documents.titles，最多 100 条）。"
+                "当用户询问知识库规模、数量、分布、趋势，或问「库里有哪些文章/规范、收录了什么」"
+                "这类标题列举问题时使用：列举类回答直接基于 documents.titles（按问题关键词筛选标题）。"
+            ),
             parameters_schema={
                 "type": "object",
                 "properties": {

@@ -166,5 +166,72 @@ class KnowledgeSearchFormulaTests(unittest.TestCase):
         cls.assert_not_called()
 
 
+class KnowledgeStatsTitlesTests(unittest.TestCase):
+    """meta_query 通道能力补齐：knowledge_stats 必须带文档标题清单维度。
+    「库里有哪些规范/文章」是标题列举类元数据问题（分类通道判 meta 是对的），
+    工具拿不到标题才会产生"统计维度暂不支持"拒答（2026-09-06 复盘）。"""
+
+    def _build_dbs(self, tmp, doc_count):
+        import sqlite3
+
+        (tmp / "data").mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(tmp / "meta.sqlite")
+        conn.execute(
+            "CREATE TABLE nodes (id TEXT PRIMARY KEY, title TEXT, status TEXT,"
+            " deleted INTEGER DEFAULT 0, library_id TEXT DEFAULT 'default')"
+        )
+        conn.execute("CREATE TABLE doc_parse_stages (doc_id TEXT, stage TEXT, page_count INTEGER)")
+        conn.execute("CREATE TABLE libraries (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO libraries VALUES ('default','默认库')")
+        for i in range(doc_count):
+            conn.execute("INSERT INTO nodes VALUES (?,?,?,?,?)", (f"d{i}", f"规范文档{i:03d}", "completed", 0, "default"))
+            conn.execute("INSERT INTO doc_parse_stages VALUES (?,?,?)", (f"d{i}", "raw_parse", 10 + i))
+        conn.execute("INSERT INTO nodes VALUES (?,?,?,?,?)", ("gone", "已删除文档", "completed", 1, "default"))
+        conn.commit()
+        conn.close()
+        rconn = sqlite3.connect(tmp / "data" / "parse_records.sqlite")
+        rconn.execute(
+            "CREATE TABLE parse_records (id TEXT, status TEXT, library_id TEXT,"
+            " created_at TEXT, file_format TEXT, file_size INTEGER)"
+        )
+        for i in range(doc_count):
+            rconn.execute(
+                "INSERT INTO parse_records VALUES (?,?,?,?,?,?)",
+                (f"d{i}", "done", "default", "2026-09-01T00:00:00", "pdf", 1024),
+            )
+        rconn.commit()
+        rconn.close()
+
+    def _run(self, doc_count):
+        import pathlib
+        import tempfile
+        from unittest import mock
+
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../services/docs-core/src")))
+        import angineer_core.agent_tools as agent_tools
+        import docs_core.paths as docs_paths
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = pathlib.Path(raw)
+            self._build_dbs(tmp, doc_count)
+            with mock.patch.object(docs_paths, "resolve_knowledge_meta_db_path", return_value=tmp / "meta.sqlite"), \
+                 mock.patch.object(docs_paths, "resolve_repo_root", return_value=tmp):
+                return agent_tools._local_knowledge_stats("default")
+
+    def test_titles_enumeration_field(self):
+        docs = self._run(3)["documents"]
+        titles = docs["titles"]
+        self.assertEqual([t["title"] for t in titles], ["规范文档000", "规范文档001", "规范文档002"])
+        self.assertTrue(all(t["status"] == "completed" for t in titles))
+        self.assertEqual(docs["titles_total"], 3)
+        self.assertFalse(docs["titles_truncated"])
+
+    def test_titles_capped_and_truncated(self):
+        docs = self._run(105)["documents"]
+        self.assertEqual(len(docs["titles"]), 100)
+        self.assertTrue(docs["titles_truncated"])
+        self.assertEqual(docs["titles_total"], 105)
+
+
 if __name__ == "__main__":
     unittest.main()
