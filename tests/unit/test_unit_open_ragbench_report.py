@@ -80,6 +80,31 @@ class ReportTests(unittest.TestCase):
         self.assertIn("hit@5(doc)", markdown)
         self.assertIn("拒答专项", markdown)
 
+    def test_slow_watchlist_shows_question_titles_not_uuids(self):
+        details = [
+            {**self._detail("aaaa1111-0000", "text"), "latency_ms": 130_000},
+            {**self._detail("bbbb2222-0000", "text"), "latency_ms": 125_000},
+            self._detail("cccc3333-0000", "text"),  # 正常耗时，不进观察单
+        ]
+        manifest = {"questions": [
+            {"uuid": "aaaa1111-0000", "query": "How does TADA handle real-time data assimilation?"},
+            {"uuid": "bbbb2222-0000", "query": "What is the role of sliding window in assimilation?"},
+            {"uuid": "cccc3333-0000", "query": "fast one"},
+        ]}
+        summary = report.group_and_summarize(details, manifest)
+        markdown = report.render_markdown(summary)
+        self.assertIn("How does TADA handle real-time data assimilation?", markdown)
+        self.assertIn("What is the role of sliding window", markdown)
+        self.assertIn("慢题观察单", markdown)
+        slow_section = markdown.split("慢题观察单")[1].split("##")[0]
+        self.assertNotIn("aaaa1111", slow_section)  # 题面替代 id，读者看得懂
+
+    def test_slow_watchlist_falls_back_to_qid_prefix(self):
+        details = [{**self._detail("zz9876543210", "text"), "latency_ms": 200_000}]
+        summary = report.group_and_summarize(details, {"questions": []})
+        markdown = report.render_markdown(summary)
+        self.assertIn("zz9876543210"[:8], markdown)  # manifest 缺题面时退回 qid 前 8 位
+
     def test_bootstrap_ci(self):
         details = [
             {"question_id": f"q{i}", "quality": "correct" if i < 8 else "wrong",

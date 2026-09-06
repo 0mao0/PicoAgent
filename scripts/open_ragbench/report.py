@@ -117,6 +117,11 @@ def group_and_summarize(run_details, manifest, ci_resamples: int = 1000):
     summary["anomalies"] = anomalies
     summary["anomaly_pending"] = bool(anomaly.actionable(anomalies))
     summary["overall"]["slow_count"] = len(anomalies.get(anomaly.SLOW, []))
+    # 题干摘录：报告里给读者看题面而不是 UUID（慢题观察单等处消费；截 70 字符）
+    summary["question_titles"] = {
+        str(q.get("uuid")): str(q.get("query") or "")[:70]
+        for q in manifest.get("questions", []) if q.get("uuid")
+    }
     # 整体关键指标的 bootstrap 95% CI（按题重采样）
     summary["overall"]["hit@5_doc_ci"] = bootstrap_ci(
         run_details,
@@ -176,8 +181,14 @@ def render_markdown(summary) -> str:
         lines += ["", "## 分布口径（median / p90）", "", "| 题型 | semantic_score | 单题耗时(s) |", "| :--- | ---: | ---: |"] + dist_lines
     slow_ids = (summary.get("anomalies") or {}).get(anomaly.SLOW) or []
     if slow_ids:
-        shown = ", ".join(slow_ids[:20]) + ("…" if len(slow_ids) > 20 else "")
-        lines += ["", f"**慢题观察单（>{anomaly.DEFAULT_SLOW_MS // 1000}s，不计异常不重跑）**: {len(slow_ids)} 题：{shown}"]
+        titles = summary.get("question_titles") or {}
+        lines += ["", f"**慢题观察单（>{anomaly.DEFAULT_SLOW_MS // 1000}s，不计异常不重跑）**: {len(slow_ids)} 题"]
+        for qid in slow_ids[:20]:
+            title = titles.get(str(qid)) or ""
+            label = (title + "…") if len(title) >= 70 else title
+            lines.append(f"- {label or str(qid)[:8]}")
+        if len(slow_ids) > 20:
+            lines.append(f"- …其余 {len(slow_ids) - 20} 题")
     overall = summary.get("overall") or {}
     if overall.get("hit@5_doc_ci"):
         lines += [
