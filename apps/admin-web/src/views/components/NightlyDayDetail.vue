@@ -1,19 +1,21 @@
 <template>
-  <!-- 夜间维护单日明细：左=统计图表与结论分析，右=关键题目（面向非技术读者的措辞） -->
+  <!-- 夜间维护单日明细：总览（矩阵图+分行结论）+ 三个折叠条（回退题/新修复题/评测报告） -->
   <div class="ndd">
-    <div class="ndd__left">
-      <div class="ndd-chips">
-        <span v-for="chip in chips" :key="chip.label" class="ndd-chip">
-          <i class="ndd-dot" :style="{ background: chip.color }" />{{ chip.label }}
-          <b>{{ chip.value ?? '—' }}</b>
-        </span>
+    <div class="ndd-overview">
+      <div class="ndd-overview__left">
+        <div class="ndd-chips">
+          <span v-for="chip in chips" :key="chip.label" class="ndd-chip">
+            <i class="ndd-dot" :style="{ background: chip.color }" />{{ chip.label }}
+            <b>{{ chip.value ?? '—' }}</b>
+          </span>
+        </div>
+        <div v-if="hasMatrix" ref="donutEl" class="ndd-donut" />
       </div>
-      <div v-if="hasMatrix" ref="donutEl" class="ndd-donut" />
       <div class="ndd-analysis">
-        <p class="ndd-analysis__main">{{ analysisMain }}</p>
+        <p v-for="(line, i) in analysisLines" :key="i" class="ndd-analysis__line">{{ line }}</p>
         <a-alert
           v-for="(reason, i) in cur.gate_reasons || []"
-          :key="i"
+          :key="`r${i}`"
           type="error"
           :message="reason"
           show-icon
@@ -27,44 +29,31 @@
           class="ndd-alert"
         />
       </div>
-      <a-collapse v-if="detail?.report_md" class="ndd-report">
-        <a-collapse-panel key="report" header="评测报告（report.md）">
-          <pre class="ndd-report__raw">{{ detail?.report_md }}</pre>
-        </a-collapse-panel>
-      </a-collapse>
     </div>
 
-    <div class="ndd__right">
-      <div class="ndd-block-title">
-        回退题目（昨晚答对 → 今晚答错）
-        <span v-if="regressions.length" class="ndd-count">{{ regressions.length }} 题</span>
-      </div>
-      <a-empty
-        v-if="!regressions.length"
-        :image="Empty.PRESENTED_IMAGE_SIMPLE"
-        description="没有题目从答对变成答错"
-      />
-      <ul v-else class="ndd-qlist">
-        <li v-for="item in regressions" :key="item.qid" class="ndd-qitem">
-          <div class="ndd-qitem__head">
-            <a-tooltip :title="item.bucket_detail || undefined">
-              <a-tag :color="bucketColor(item.bucket)">{{ bucketPlain(item.bucket) }}</a-tag>
+    <a-collapse class="ndd-collapses">
+      <a-collapse-panel key="regressions" :header="`回退题目（昨晚答对 → 今晚答错，${regressions.length} 题）`">
+        <a-empty
+          v-if="!regressions.length"
+          :image="Empty.PRESENTED_IMAGE_SIMPLE"
+          description="没有题目从答对变成答错"
+        />
+        <ul v-else class="ndd-qlist">
+          <li v-for="item in regressions" :key="item.qid" class="ndd-qitem">
+            <div class="ndd-qitem__head">
+              <a-tooltip :title="item.bucket_detail || undefined">
+                <a-tag :color="bucketColor(item.bucket)">{{ bucketPlain(item.bucket) }}</a-tag>
+              </a-tooltip>
+              <span class="ndd-qitem__mark">昨晚 ✓ → 今晚 ✗</span>
+            </div>
+            <a-tooltip :title="item.question || undefined">
+              <p class="ndd-qitem__q">{{ item.question || `题目 ${item.qid.slice(0, 8)}` }}</p>
             </a-tooltip>
-            <span class="ndd-qitem__mark">昨晚 ✓ → 今晚 ✗</span>
-          </div>
-          <a-tooltip :title="item.question || undefined">
-            <p class="ndd-qitem__q">{{ item.question || `题目 ${item.qid.slice(0, 8)}` }}</p>
-          </a-tooltip>
-        </li>
-      </ul>
+          </li>
+        </ul>
+      </a-collapse-panel>
 
-      <template v-if="fixed.length">
-        <div class="ndd-block-title">
-          新修复题目（昨晚答错 → 今晚答对）
-          <span v-if="matrixPf != null && matrixPf > fixed.length" class="ndd-count">
-            共 {{ matrixPf }} 题，展示 {{ fixed.length }} 题
-          </span>
-        </div>
+      <a-collapse-panel key="fixed" :header="fixedHeader">
         <ul class="ndd-qlist">
           <li v-for="item in fixed" :key="item.qid" class="ndd-qitem ndd-qitem--fixed">
             <div class="ndd-qitem__head">
@@ -76,8 +65,12 @@
             </a-tooltip>
           </li>
         </ul>
-      </template>
-    </div>
+      </a-collapse-panel>
+
+      <a-collapse-panel v-if="detail?.report_md" key="report" header="评测报告（report.md）">
+        <pre class="ndd-report__raw">{{ detail?.report_md }}</pre>
+      </a-collapse-panel>
+    </a-collapse>
   </div>
 </template>
 
@@ -132,7 +125,6 @@ const bucketColor = (bucket?: string) => (bucket === 'infra_anomaly' ? 'default'
 const cur = computed<NightlyDayLite>(() => props.detail?.nightly || props.day)
 
 const pct = (value?: number) => (value == null ? '—' : `${(value * 100).toFixed(2)}%`)
-const signedPp = (delta?: number) => (delta == null ? '—' : `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(2)}`)
 
 const hasMatrix = computed(() => cur.value.matrix != null)
 const matrixPf = computed(() => cur.value.matrix?.pf)
@@ -147,17 +139,20 @@ const chips = computed(() => {
   ]
 })
 
-const analysisMain = computed(() => {
+/** 分行结论：一行一件事，不写门禁等内部术语 */
+const analysisLines = computed<string[]>(() => {
   const day = cur.value
-  if (day.state === 'error') return day.note || '评测中断，未产出结果。'
-  const ci = day.delta_ci95
-  const ciText = ci ? `（95% 置信区间 ${signedPp(ci[0])} ~ ${signedPp(ci[1])}pp）` : ''
-  const base = `今晚正确率 ${pct(day.overall_score)}，相对基线 ${signedPp(day.delta)} 个百分点${ciText}。`
+  if (day.state === 'error') return [day.note || '评测中断，未产出结果。']
+  const dir = (day.delta ?? 0) >= 0 ? '高' : '低'
+  const lines = [`今晚答对 ${pct(day.overall_score)}，比基线${dir} ${(Math.abs(day.delta ?? 0) * 100).toFixed(2)} 个百分点。`]
   const m = day.matrix || {}
-  const flow = `与基线相比：新修复 ${m.pf ?? '—'} 题、新回退 ${m.fp ?? '—'} 题。`
-  return day.state === 'red'
-    ? `${base}${flow}已触发回归门禁，需要排查。`
-    : `${base}${flow}未触发回归门禁。`
+  if (m.pf != null || m.fp != null) {
+    lines.push(`答对变答错 ${m.fp ?? '—'} 题，答错变答对 ${m.pf ?? '—'} 题。`)
+  }
+  lines.push(day.state === 'red'
+    ? '整体明显变差，需要排查下方回退题目。'
+    : '整体没有变差，正常波动。')
+  return lines
 })
 
 const regressions = computed<QuestionItem[]>(() => {
@@ -166,6 +161,12 @@ const regressions = computed<QuestionItem[]>(() => {
   return Object.entries(day.regressions || {}).map(([qid, bucket]) => ({ qid, bucket_detail: bucket }))
 })
 const fixed = computed<QuestionItem[]>(() => cur.value.fixed_items || [])
+const fixedHeader = computed(() => {
+  const total = matrixPf.value ?? fixed.value.length
+  return fixed.value.length < total
+    ? `新修复题目（昨晚答错 → 今晚答对，共 ${total} 题，展示 ${fixed.value.length} 题）`
+    : `新修复题目（昨晚答错 → 今晚答对，${total} 题）`
+})
 
 // ── 过渡矩阵 donut（echarts，沿用 ApiKeyChart 的全量 import 惯例）──
 const donutEl = ref<HTMLElement | null>(null)
@@ -217,24 +218,35 @@ onBeforeUnmount(() => {
 <style scoped>
 .ndd {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+/* 总览：图 + 分行结论，横向铺满且可换行，不出横向滚动 */
+.ndd-overview {
+  display: flex;
   gap: 24px;
   align-items: flex-start;
   flex-wrap: wrap;
-}
-.ndd__left {
-  flex: 1.15 1 420px;
   min-width: 0;
+}
+.ndd-overview__left {
+  flex: 0 1 360px;
+  min-width: 280px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
-.ndd__right {
+.ndd-analysis {
   flex: 1 1 320px;
-  min-width: 0;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .ndd-chips {
   display: flex;
-  gap: 16px;
+  gap: 8px 16px;
   flex-wrap: wrap;
 }
 .ndd-chip {
@@ -243,6 +255,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   font-size: 13px;
   color: var(--text-secondary, rgba(0, 0, 0, 0.65));
+  white-space: nowrap;
 }
 .ndd-chip b {
   color: var(--text-primary, rgba(0, 0, 0, 0.85));
@@ -255,16 +268,20 @@ onBeforeUnmount(() => {
 }
 .ndd-donut {
   width: 100%;
+  max-width: 320px;
   height: 200px;
 }
-.ndd-analysis__main {
+.ndd-analysis__line {
   margin: 0;
   font-size: 13px;
   line-height: 22px;
   color: var(--text-primary, rgba(0, 0, 0, 0.85));
 }
 .ndd-alert {
-  margin-top: 8px;
+  margin-top: 2px;
+}
+.ndd-collapses {
+  background: transparent;
 }
 .ndd-report__raw {
   white-space: pre-wrap;
@@ -273,18 +290,6 @@ onBeforeUnmount(() => {
   line-height: 18px;
   max-height: 360px;
   overflow: auto;
-}
-.ndd-block-title {
-  font-weight: 600;
-  margin: 12px 0 8px;
-}
-.ndd-block-title:first-child {
-  margin-top: 0;
-}
-.ndd-count {
-  font-weight: 400;
-  font-size: 12px;
-  color: var(--text-secondary, rgba(0, 0, 0, 0.45));
 }
 .ndd-qlist {
   list-style: none;
@@ -318,6 +323,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 20px;
   color: var(--text-primary, rgba(0, 0, 0, 0.85));
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;

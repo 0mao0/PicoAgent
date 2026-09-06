@@ -146,13 +146,13 @@ const fmtTime = (iso?: string) => {
 const baselinePct = (day: NightlyDay) =>
   day.overall_score != null && day.delta != null ? pct(day.overall_score - day.delta) : '—'
 
-/** 老数据没有 verdict 字段时按状态兜底生成一句话 */
+/** 老数据没有 verdict 字段时按状态兜底生成一句话（措辞与发布端 _verdict 同风格，面向普通读者） */
 const fallbackVerdict = (day: NightlyDay) => {
   if (day.state === 'error' || day.state === 'corrupt') return '评测中断，未出结果'
-  if (day.state === 'red') return '触发回归门禁，需排查'
-  if (day.delta != null && day.delta > 0.005) return '较基线提升，无回归'
-  if (day.delta != null && day.delta < -0.005) return '小幅回落，未触门禁'
-  return '与基线持平，无回归'
+  if (day.state === 'red') return '整体变差，需排查'
+  if (day.delta != null && day.delta > 0.005) return '较基线提升，没有题目变差'
+  if (day.delta != null && day.delta < -0.005) return '小幅回落，正常波动'
+  return '与基线持平，没有变差'
 }
 
 const detailOf = (record: NightlyDay): NightlyDayDetailData | undefined => details.value[record.date]
@@ -206,6 +206,7 @@ onMounted(fetchList)
   gap: 12px;
   flex-wrap: wrap;
   width: 100%;
+  box-sizing: border-box;
   margin-bottom: 12px;
   padding: 8px 12px;
   border: 1px solid var(--border-color, rgba(5, 5, 5, 0.06));

@@ -25,19 +25,20 @@ _QUESTION_MAX = 300
 
 
 def _verdict(state: str, delta, regress_count: int) -> str:
-    """≤20 字一句话评价（表格「评价」列）：pp 取整，精确小数留给「基线」列，两处不重复。"""
+    """≤20 字一句话评价（表格「评价」列）：pp 取整，精确小数留给「基线」列，两处不重复。
+    措辞面向普通读者：不写"回归/门禁"等内部术语。"""
     if state == "error":
         return "评测中断，未出结果"
     if state == "red":
-        return f"回退 {regress_count} 题，需排查" if regress_count else "触发回归门禁，需排查"
+        return f"回退 {regress_count} 题，需排查" if regress_count else "整体变差，需排查"
     if delta is None:
-        return "无基线可比，未触门禁"
+        return "无基线可比，未见变差"
     pp = round(delta * 100)
     if pp >= 1:
-        return f"提升 {pp}pp，无回归"
+        return f"提升 {pp}pp，没有题目变差"
     if pp <= -1:
-        return f"回落 {abs(pp)}pp，未触门禁"
-    return "与基线持平，无回归"
+        return f"回落 {abs(pp)}pp，正常波动"
+    return "与基线持平，没有变差"
 
 
 def _load_question_texts(dataset_file) -> dict:
