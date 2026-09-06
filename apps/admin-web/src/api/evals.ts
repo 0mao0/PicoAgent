@@ -78,6 +78,16 @@ export const evalsApi = {
 
   /** 夜间维护：单日详情（结论 json + report.md 原文） */
   getNightlyDay: (date: string) => api.get(`/evals/nightly/${encodePathSegment(date)}`),
+
+  /** 夜间维护：调度配置（每晚北京时间 + 启用开关 + 上次/下次触发） */
+  getNightlySettings: () => api.get('/evals/nightly/settings'),
+
+  /** 夜间维护：保存调度配置 */
+  saveNightlySettings: (payload: { enabled: boolean; hour: number; minute: number }) =>
+    api.put('/evals/nightly/settings', payload),
+
+  /** 夜间维护：立即触发一次 workflow_dispatch */
+  runNightlyNow: () => api.post('/evals/nightly/run-now'),
 }
 
 export default evalsApi

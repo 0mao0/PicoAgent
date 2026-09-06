@@ -1,6 +1,25 @@
 <template>
   <!-- 夜间维护：nightly 门禁结果的历史与明细（数据源 data/evals/nightly/，仅管理员） -->
   <div class="eval-nightly-panel">
+    <div class="nightly-schedule">
+      <a-space size="small" wrap>
+        <span class="nightly-schedule__label">每晚定时执行（北京时间）</span>
+        <a-switch v-model:checked="sched.enabled" size="small" />
+        <a-time-picker
+          v-model:value="sched.time"
+          format="HH:mm"
+          value-format="HH:mm"
+          :allow-clear="false"
+          size="small"
+          width="88px"
+        />
+        <a-button size="small" type="primary" ghost :loading="sched.saving" @click="saveSchedule">
+          保存
+        </a-button>
+        <a-button size="small" :loading="sched.running" @click="runNow">立即运行</a-button>
+        <span class="nightly-schedule__status">{{ scheduleStatusText }}</span>
+      </a-space>
+    </div>
     <DataTable
       :columns="columns"
       :data-source="days"
@@ -53,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { DataTable } from '@angineer/table-ui'
@@ -163,7 +182,83 @@ const fetchList = async () => {
   }
 }
 
-onMounted(fetchList)
+// ── 定时调度设置（存服务器 data/evals/nightly_settings.json，1 分钟内生效）──
+interface NightlySettingsRsp {
+  enabled: boolean
+  hour: number
+  minute: number
+  next_fire_at?: string | null
+  last_dispatch?: { at?: string; ok?: boolean; source?: string; detail?: string } | null
+}
+
+const sched = reactive({
+  enabled: false,
+  time: '01:00',
+  saving: false,
+  running: false,
+  nextFireAt: '',
+  lastDispatch: null as NightlySettingsRsp['last_dispatch'],
+})
+
+const scheduleStatusText = computed(() => {
+  const parts: string[] = []
+  if (sched.enabled && sched.nextFireAt) parts.push(`下次 ${fmtTime(sched.nextFireAt)}`)
+  if (!sched.enabled) parts.push('定时未启用')
+  if (sched.lastDispatch?.at) {
+    parts.push(`上次触发 ${fmtTime(sched.lastDispatch.at)}${sched.lastDispatch.ok ? '（成功）' : '（失败）'}`)
+  }
+  return parts.join('　')
+})
+
+const applySettings = (s: NightlySettingsRsp) => {
+  sched.enabled = !!s.enabled
+  sched.time = `${String(s.hour ?? 1).padStart(2, '0')}:${String(s.minute ?? 0).padStart(2, '0')}`
+  sched.nextFireAt = s.next_fire_at || ''
+  sched.lastDispatch = s.last_dispatch || null
+}
+
+const loadSchedule = async () => {
+  try {
+    applySettings(await evalsApi.getNightlySettings() as NightlySettingsRsp)
+  } catch {
+    // 读取失败保持默认值展示，不打扰主列表
+  }
+}
+
+const saveSchedule = async () => {
+  sched.saving = true
+  try {
+    const [hour, minute] = sched.time.split(':').map(Number)
+    applySettings(await evalsApi.saveNightlySettings({ enabled: sched.enabled, hour, minute }) as NightlySettingsRsp)
+    message.success(sched.enabled ? `已保存：每晚 ${sched.time} 执行` : '已保存：定时执行关闭')
+  } catch (e) {
+    message.error(String((e as Error)?.message || '保存失败'))
+  } finally {
+    sched.saving = false
+  }
+}
+
+const runNow = async () => {
+  sched.running = true
+  try {
+    const r = await evalsApi.runNightlyNow() as { ok: boolean; detail?: string; at?: string }
+    if (r.ok) {
+      message.success(`已于 ${fmtTime(r.at || '')} 触发，进度见 GitHub Actions`)
+    } else {
+      message.error(`触发失败：${r.detail || '详见服务器日志'}`)
+    }
+    await loadSchedule()
+  } catch (e) {
+    message.error(String((e as Error)?.message || '触发失败'))
+  } finally {
+    sched.running = false
+  }
+}
+
+onMounted(() => {
+  fetchList()
+  loadSchedule()
+})
 </script>
 
 <style scoped>
@@ -173,6 +268,16 @@ onMounted(fetchList)
   overflow: auto;
   padding: 12px 16px;
   box-sizing: border-box;
+}
+.nightly-schedule {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.nightly-schedule__label,
+.nightly-schedule__status {
+  font-size: 12px;
+  color: var(--text-secondary, rgba(0, 0, 0, 0.45));
 }
 .nightly-help {
   margin-left: 4px;
