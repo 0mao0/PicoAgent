@@ -73,9 +73,10 @@ jobs:
         run: |
           echo "Waiting for services..."
           sleep 10
-          FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/ || echo "000")
-          ADMIN=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/admin/ || echo "000")
-          API=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/docs || echo "000")
+          # -L 跟随 80→https 的 301（v0.2.29 起 80 端口只做 ACME+重定向，裸码恒为 301）
+          FRONTEND=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost/ || echo "000")
+          ADMIN=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost/admin/ || echo "000")
+          API=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost/docs || echo "000")
           if [ "$ADMIN" = "401" ]; then ADMIN="200(auth)"; fi
           echo "Frontend: $FRONTEND"
           echo "Admin: $ADMIN"
