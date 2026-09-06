@@ -566,7 +566,8 @@ const onSelectHistoricalRun = async (runId: string) => {
   await selectHistoricalRun(runId)
 }
 
-/** 夜间维护面板点"在日常测试中打开"：切回工作台、选对测试集并加载该 run */
+/** 夜间维护面板点"在日常测试中打开"：切回工作台、选对测试集并加载该 run。
+ * run 存于当前环境的评测库（本地/站点各自独立），查不到时以前会静默空态，必须言明 */
 const onNightlyOpenRun = async (payload: { datasetId: string; runId: string }) => {
   evalView.value = 'workbench'
   try {
@@ -574,6 +575,9 @@ const onNightlyOpenRun = async (payload: { datasetId: string; runId: string }) =
       await onDatasetSelect([payload.datasetId], [])
     }
     await selectHistoricalRun(payload.runId)
+    if (!runDetails.value.size) {
+      message.warning(`当前环境评测库中未找到该 run（${payload.runId}）的逐题明细，无法展示；夜间记录与工作台共用同一环境的评测库，请确认浏览的是运行该次评测的环境`)
+    }
   } catch (e) {
     message.error(String((e as Error)?.message || '打开夜间 run 失败'))
   }
