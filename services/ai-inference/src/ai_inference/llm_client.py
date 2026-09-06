@@ -147,6 +147,28 @@ def _new_async_httpx_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout, trust_env=_TRUST_ENV)
 
 
+def _build_extra_body(config: LLMModelConfig) -> Dict[str, Any]:
+    """extra_body 统一构建（原为 4 处复制粘贴，收敛至此）。
+
+    优先级：端点级显式 enable_thinking > 环境变量 ANGINEER_CHAT_TEMPLATE_KWARGS >
+    隐式 URL/模型名规则。端点级开关的意义：隐式规则只认 dashscope/angineer.cn/qwen3.6，
+    直连 vLLM/DGX 的思考模型一条都不命中——思考全量输出曾是 53 题全灭事故的触发面，
+    现在这类端点应在 LLM_CONFIGS 里显式声明 "enable_thinking": true/false（如
+    dgx-qwen38-flash 直连提速可显式 false），而不是依赖不被命中的隐式规则。"""
+    extra_body: Dict[str, Any] = {}
+    if getattr(config, "enable_thinking", None) is not None:
+        extra_body["chat_template_kwargs"] = {"enable_thinking": bool(config.enable_thinking)}
+        return extra_body
+    _template_kwargs = json.loads(os.getenv("ANGINEER_CHAT_TEMPLATE_KWARGS", "null"))
+    if _template_kwargs:
+        extra_body["chat_template_kwargs"] = _template_kwargs
+    elif "dashscope" in config.base_url or "aliyun" in config.base_url:
+        extra_body["enable_thinking"] = False
+    elif "angineer.cn" in config.base_url or "qwen3.6" in (config.model or ""):
+        extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+    return extra_body
+
+
 def _raise_mapped(error: Optional[Exception]) -> None:
     """把 OpenAI SDK 异常映射为 ai-inference 错误层级并抛出。"""
     if error is None:
@@ -525,14 +547,7 @@ class LLMClient:
             http_client=_new_httpx_client(_build_timeout(timeout_config)),
         )
 
-        extra_body = {}
-        _template_kwargs = json.loads(os.getenv("ANGINEER_CHAT_TEMPLATE_KWARGS", "null"))
-        if _template_kwargs:
-            extra_body["chat_template_kwargs"] = _template_kwargs
-        elif "dashscope" in config.base_url or "aliyun" in config.base_url:
-            extra_body["enable_thinking"] = False
-        elif "angineer.cn" in config.base_url or "qwen3.6" in config.model:
-            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+        extra_body = _build_extra_body(config)
 
         effective_max_tokens = max_tokens if max_tokens is not None else self._config.max_tokens
         response = client.chat.completions.create(
@@ -583,14 +598,7 @@ class LLMClient:
             http_client=_new_async_httpx_client(_build_timeout(timeout_config)),
         )
 
-        extra_body = {}
-        _template_kwargs = json.loads(os.getenv("ANGINEER_CHAT_TEMPLATE_KWARGS", "null"))
-        if _template_kwargs:
-            extra_body["chat_template_kwargs"] = _template_kwargs
-        elif "dashscope" in config.base_url or "aliyun" in config.base_url:
-            extra_body["enable_thinking"] = False
-        elif "angineer.cn" in config.base_url or "qwen3.6" in config.model:
-            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+        extra_body = _build_extra_body(config)
 
         effective_max_tokens = max_tokens if max_tokens is not None else self._config.max_tokens
         response = await client.chat.completions.create(
@@ -641,14 +649,7 @@ class LLMClient:
             http_client=_new_httpx_client(_build_timeout(timeout_config)),
         )
 
-        extra_body = {}
-        _template_kwargs = json.loads(os.getenv("ANGINEER_CHAT_TEMPLATE_KWARGS", "null"))
-        if _template_kwargs:
-            extra_body["chat_template_kwargs"] = _template_kwargs
-        elif "dashscope" in config.base_url or "aliyun" in config.base_url:
-            extra_body["enable_thinking"] = False
-        elif "angineer.cn" in config.base_url or "qwen3.6" in config.model:
-            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+        extra_body = _build_extra_body(config)
 
         effective_max_tokens = max_tokens if max_tokens is not None else self._config.max_tokens
         response = client.chat.completions.create(
@@ -706,14 +707,7 @@ class LLMClient:
             http_client=_new_async_httpx_client(_build_timeout(timeout_config)),
         )
 
-        extra_body = {}
-        _template_kwargs = json.loads(os.getenv("ANGINEER_CHAT_TEMPLATE_KWARGS", "null"))
-        if _template_kwargs:
-            extra_body["chat_template_kwargs"] = _template_kwargs
-        elif "dashscope" in config.base_url or "aliyun" in config.base_url:
-            extra_body["enable_thinking"] = False
-        elif "angineer.cn" in config.base_url or "qwen3.6" in config.model:
-            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+        extra_body = _build_extra_body(config)
 
         effective_max_tokens = max_tokens if max_tokens is not None else self._config.max_tokens
         response = await client.chat.completions.create(

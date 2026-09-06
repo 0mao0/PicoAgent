@@ -20,6 +20,10 @@ class LLMModelConfig(BaseModel):
     model: Optional[str] = None
     enabled: bool = True
     priority: int = 0
+    # 端点级思考开关（vLLM chat_template_kwargs.enable_thinking）：
+    # null=沿用环境变量与隐式 URL/模型名规则；true/false=显式覆盖，优先级最高。
+    # 直连 vLLM/DGX 的思考模型隐式规则不命中（53 题全灭事故触发面），应在此显式声明。
+    enable_thinking: Optional[bool] = None
 
 
 class RetryConfig(BaseModel):
