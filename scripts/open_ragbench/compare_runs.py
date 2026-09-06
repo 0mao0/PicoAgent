@@ -237,7 +237,8 @@ def cmd_compare(args) -> int:
         "delta": round(delta, 4) if delta is not None else None,
         "delta_ci95": [round(lo, 4), round(hi, 4)] if lo is not None else None,
         "buckets": bucket_cis, "anomalies": {k: v for k, v in anomalies.items() if v},
-        "regressions": regressions, "gate_red": bool(reasons), "gate_reasons": reasons,
+        "regressions": regressions, "fixed": sorted(matrix["pf"]),
+        "gate_red": bool(reasons), "gate_reasons": reasons,
     }
     lines = [
         f"# 回归对比：{new_run.get('run_id')} vs {base_label}",

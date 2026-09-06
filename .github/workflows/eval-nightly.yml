@@ -73,6 +73,7 @@ jobs:
             --artifacts "$OUT_DIR" \
             --target "$NIGHTLY_DATA" \
             --dataset-id open-ragbench-subset-v2 \
+            --dataset-file data/evals/datasets/open-ragbench-subset-v2.json \
             --error-note "eval=${{ steps.eval.conclusion }} report=${{ steps.report.conclusion }} gate=${{ steps.gate.conclusion }}"
 
       - name: Notify WeCom (always)

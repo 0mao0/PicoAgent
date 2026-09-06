@@ -64,6 +64,53 @@ class PublishNightlyTests(unittest.TestCase):
             self.artifacts, "ds", "2026-09-06", error_note="eval=failure report=skipped")
         self.assertEqual(entry["state"], "error")
         self.assertIn("eval=failure", entry["note"])
+        self.assertEqual(entry["verdict"], "评测中断，未出结果")
+
+    def _write_dataset(self):
+        ds = self.tmp / "dataset.json"
+        ds.write_text(json.dumps({"questions": [
+            {"question_id": "q-a", "question": "题干 A 全文"},
+            {"question_id": "q-c", "question": "题干 C"},
+            {"question_id": "f-1", "question": "修复题 1"},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        return ds
+
+    def test_verdict_and_items_with_dataset(self):
+        gate = dict(GATE, fixed=["f-1", "f-2"], regressions={
+            "q-b": "severe_miss(sem<0.2)",
+            "q-a": "refusal(该答却拒答/无答案)",
+            "q-c": "refusal(该答却拒答/无答案)",
+        })
+        (self.artifacts / "gate.json").write_text(json.dumps(gate, ensure_ascii=False), encoding="utf-8")
+        entry = publish_nightly.build_nightly_entry(
+            self.artifacts, "ds", "2026-09-06", dataset_file=self._write_dataset())
+        self.assertEqual(entry["verdict"], "提升 3pp，无回归")  # 0.0267 → 取整 3pp
+        self.assertEqual([i["qid"] for i in entry["regression_items"]], ["q-a", "q-c", "q-b"])  # 按归因桶排序截断
+        first = entry["regression_items"][0]
+        self.assertEqual(first["bucket"], "refusal")  # 机读码与详情分离
+        self.assertEqual(first["bucket_detail"], "refusal(该答却拒答/无答案)")
+        self.assertEqual(first["question"], "题干 A 全文")
+        self.assertEqual(entry["regression_items"][2]["question"], "")  # 题集缺该题 → 空串不炸
+        self.assertEqual(entry["fixed_items"][0],
+                         {"qid": "f-1", "question": "修复题 1", "bucket": "", "bucket_detail": ""})
+
+    def test_verdict_red_counts_regressions(self):
+        gate = dict(GATE, gate_red=True)
+        (self.artifacts / "gate.json").write_text(json.dumps(gate), encoding="utf-8")
+        entry = publish_nightly.build_nightly_entry(self.artifacts, "ds", "2026-09-06")
+        self.assertEqual(entry["verdict"], "回退 1 题，需排查")
+        self.assertEqual(entry["regression_items"][0]["question"], "")  # 未传题集仍可发布
+
+    def test_items_capped(self):
+        gate = dict(
+            GATE,
+            regressions={f"q-{i:03d}": f"severe_miss(r{i})" for i in range(60)},
+            fixed=[f"f-{i:03d}" for i in range(30)],
+        )
+        (self.artifacts / "gate.json").write_text(json.dumps(gate), encoding="utf-8")
+        entry = publish_nightly.build_nightly_entry(self.artifacts, "ds", "2026-09-06")
+        self.assertEqual(len(entry["regression_items"]), publish_nightly.REGRESSION_ITEMS_MAX)
+        self.assertEqual(len(entry["fixed_items"]), publish_nightly.FIXED_ITEMS_MAX)
 
     def test_main_end_to_end_and_prune(self):
         self._write_artifacts()
