@@ -11,7 +11,7 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-for _rel in ("services/aichat-api", "services/evals-core/src"):
+for _rel in ("services/aichat-api", "services/evals-core/src", "services/ai-inference/src"):
     p = os.path.join(ROOT, _rel)
     if p not in sys.path:
         sys.path.insert(0, p)
@@ -93,6 +93,25 @@ class FireTimeTests(unittest.TestCase):
         self.assertTrue(nc.due(cfg, after))
         self.assertFalse(nc.due(dict(cfg, last_dispatch={"slot": nc.slot_of(cfg, after)}), after))
         self.assertFalse(nc.due(dict(cfg, enabled=False), after))
+
+
+class RunPlanTests(unittest.TestCase):
+    def test_plan_shape_models_and_concurrency(self):
+        ns = lambda **kw: type("Ns", (), kw)
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(
+                os.environ, {"NIGHTLY_SETTINGS_FILE": str(Path(td) / "s.json"), "EVAL_CONCURRENCY": "5"}):
+            with mock.patch("evals_core.dataset.manager.get_dataset",
+                            return_value={"dataset_id": "ds-1", "title": "冒烟集", "question_count": 25}), \
+                 mock.patch("evals_core.runner.answer_eval._judge_candidates",
+                            return_value=["DeepSeek-V4-Flash-Judge", None]), \
+                 mock.patch("ai_inference.llm_config.load_llm_models_from_env",
+                            return_value=[ns(name="Qwen3.6-35B"), ns(name="Other")]):
+                plan = nc.run_plan()
+        self.assertEqual(plan["dataset"]["title"], "冒烟集")
+        self.assertEqual(plan["dataset"]["question_count"], 25)
+        self.assertEqual(plan["answer_model"], "Qwen3.6-35B")
+        self.assertEqual(plan["judge_models"], ["DeepSeek-V4-Flash-Judge", "兜底=作答模型"])
+        self.assertEqual(plan["concurrency"], 5)
 
 
 class LaunchTests(unittest.TestCase):

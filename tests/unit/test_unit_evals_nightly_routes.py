@@ -161,6 +161,19 @@ class NightlyRoutesTests(unittest.TestCase):
         self.assertEqual(r.json()["at"], "2026-09-06T13:00:00+08:00")
         self.assertEqual(launched.await_args[0][0], "manual")
 
+    def test_run_plan_preview_and_running_flag(self):
+        import nightly_control
+        with self._settings_env(), _patch_auth(True, is_admin=True):
+            c = self._client()
+            self.assertFalse(c.get("/api/evals/nightly/settings").json()["running"])
+            with mock.patch.object(nightly_control, "run_plan",
+                                   return_value={"dataset": {"id": "ds", "title": "T"}}):
+                rp = c.get("/api/evals/nightly/run-plan")
+            self.assertEqual(rp.status_code, 200)
+            self.assertEqual(rp.json()["dataset"]["title"], "T")
+        with self._settings_env(), _patch_auth(False):
+            self.assertEqual(self._client().get("/api/evals/nightly/run-plan").status_code, 401)
+
     def test_run_now_reports_busy(self):
         import nightly_control
         with self._settings_env(), mock.patch.object(

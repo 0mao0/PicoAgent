@@ -117,6 +117,32 @@ def due(cfg: dict, now: datetime) -> bool:
     return last.get("slot") != slot_of(cfg, now)
 
 
+def run_plan() -> dict:
+    """「立即运行」确认弹框的预览：跑哪个集、答题/评判模型、并发（只出配置名，绝无密钥）。"""
+    from evals_core.dataset import manager
+    from evals_core.runner import answer_eval
+    cfg = load_settings()
+    ds = manager.get_dataset(cfg["dataset_id"]) or {}
+    ordered: list = []
+    try:
+        from ai_inference.llm_config import load_llm_models_from_env
+        ordered = [m.name for m in load_llm_models_from_env()]
+    except Exception:  # noqa: BLE001 模型清单读取失败不阻塞预览
+        logger.warning("LLM_CONFIGS 模型清单读取失败", exc_info=True)
+    judge_names = []
+    for candidate in answer_eval._judge_candidates():
+        judge_names.append(candidate or "兜底=作答模型")
+    return {
+        "dataset": {"id": cfg["dataset_id"], "title": ds.get("title") or cfg["dataset_id"],
+                    "question_count": ds.get("question_count")},
+        "answer_model": ordered[0] if ordered else "默认模型（LLM_CONFIGS 首个可用端点）",
+        "judge_models": judge_names or ["兜底=作答模型"],
+        "concurrency": int(os.getenv("EVAL_CONCURRENCY", "3") or 3),
+        "timeout_minutes": cfg["timeout_minutes"],
+        "retry_rounds": cfg["retry_rounds"],
+    }
+
+
 # ── 流水线触发（进程内唯一，天然替代 GH 的 concurrency 锁）──
 
 _active: Optional[asyncio.Task] = None

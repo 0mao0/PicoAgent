@@ -383,10 +383,17 @@ async def list_nightly_days():
 
 @evals_router.get("/nightly/settings", dependencies=[Depends(require_admin_session)])
 async def get_nightly_settings():
-    """夜间维护调度配置 + 下次触发时间（北京时间）。"""
+    """夜间维护调度配置 + 下次触发时间（北京时间）+ 流水线是否在跑。"""
     cfg = nightly_control.load_settings()
     nxt = nightly_control.next_fire_at(cfg, _dt.now(_tz.utc))
-    return {**cfg, "next_fire_at": nxt.isoformat(timespec="minutes") if nxt else None}
+    return {**cfg, "running": nightly_control.is_running(),
+            "next_fire_at": nxt.isoformat(timespec="minutes") if nxt else None}
+
+
+@evals_router.get("/nightly/run-plan", dependencies=[Depends(require_admin_session)])
+async def get_nightly_run_plan():
+    """「立即运行」确认弹框预览：测试集/作答模型/评判模型链/并发（仅配置名，无密钥）。"""
+    return nightly_control.run_plan()
 
 
 @evals_router.put("/nightly/settings", dependencies=[Depends(require_admin_session)])
