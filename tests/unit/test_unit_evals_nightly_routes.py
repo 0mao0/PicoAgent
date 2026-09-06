@@ -139,8 +139,8 @@ class NightlyRoutesTests(unittest.TestCase):
             c = self._client()
             r = c.get("/api/evals/nightly/settings")
             self.assertEqual(r.status_code, 200)
-            self.assertEqual(r.json()["enabled"], False)
-            self.assertIsNone(r.json()["next_fire_at"])          # 未启用 → 无下次触发
+            self.assertEqual(r.json()["enabled"], True)            # 每晚定时执行=默认选择
+            self.assertIsNotNone(r.json()["next_fire_at"])         # 默认启用 → 必有下次触发
             r = c.put("/api/evals/nightly/settings", json={"enabled": True, "hour": 2, "minute": 30})
             self.assertTrue(r.json()["enabled"])
             self.assertIsNotNone(r.json()["next_fire_at"])        # 启用后必有下次触发时刻

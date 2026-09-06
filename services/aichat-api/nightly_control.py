@@ -19,7 +19,8 @@ logger = logging.getLogger("nightly_control")
 
 BJT = paths.BJT
 DEFAULT_SETTINGS = {
-    "enabled": False,
+    # 每晚定时执行是默认选择（01:00 北京时间）；关闭需要显式保存一次
+    "enabled": True,
     "hour": 1,
     "minute": 0,
     "dataset_id": paths.DATASET_DEFAULT,
@@ -36,7 +37,7 @@ def normalize_settings(raw: dict) -> dict:
     """校验+归一（PUT 入参）；非法抛 ValueError（路由层转 400）。"""
     if not isinstance(raw, dict):
         raise ValueError("请求体必须是对象")
-    enabled = raw.get("enabled", False)
+    enabled = raw.get("enabled", DEFAULT_SETTINGS["enabled"])
     if not isinstance(enabled, bool):
         raise ValueError("enabled 必须是布尔")
 
@@ -76,7 +77,7 @@ def load_settings() -> dict:
             if isinstance(ld, dict):
                 last_dispatch = ld
     except (OSError, ValueError):
-        pass  # 文件缺失/损坏 → 默认值（enabled=False），接口仍可用
+        pass  # 文件缺失/损坏 → 默认值（每晚定时执行=默认选择），接口仍可用
     cfg["last_dispatch"] = last_dispatch
     return cfg
 

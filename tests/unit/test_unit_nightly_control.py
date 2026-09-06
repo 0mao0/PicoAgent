@@ -50,7 +50,7 @@ class PathsTests(unittest.TestCase):
 class SettingsTests(_TmpSettings):
     def test_defaults_when_missing(self):
         cfg = nc.load_settings()
-        self.assertEqual(cfg["enabled"], False)
+        self.assertEqual(cfg["enabled"], True)  # 每晚定时执行是默认选择
         self.assertEqual((cfg["hour"], cfg["minute"]), (1, 0))
         self.assertEqual(cfg["dataset_id"], "open-ragbench-subset-v2")
         self.assertIsNone(cfg["last_dispatch"])
@@ -76,7 +76,7 @@ class SettingsTests(_TmpSettings):
 
     def test_load_tolerates_corrupt_file(self):
         Path(self.path).write_text("{坏 json", encoding="utf-8")
-        self.assertEqual(nc.load_settings()["enabled"], False)
+        self.assertEqual(nc.load_settings()["enabled"], True)  # 损坏退回默认=启用定时
 
 
 class FireTimeTests(unittest.TestCase):
