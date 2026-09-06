@@ -3,7 +3,10 @@ import asyncio
 import json
 import os
 import re as _re
+from datetime import datetime as _dt, timezone as _tz
 from typing import Any, Dict, Optional
+
+import nightly_control
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile
 
@@ -375,6 +378,29 @@ async def list_nightly_days():
     return {"days": days}
 
 
+# 注意路由顺序：/nightly/settings 必须注册在 /nightly/{date} 之前，否则被日期路由吞成 404
+
+
+@evals_router.get("/nightly/settings", dependencies=[Depends(require_admin_session)])
+async def get_nightly_settings():
+    """夜间维护调度配置 + 下次触发时间（北京时间）。"""
+    cfg = nightly_control.load_settings()
+    nxt = nightly_control.next_fire_at(cfg, _dt.now(_tz.utc))
+    return {**cfg, "next_fire_at": nxt.isoformat(timespec="minutes") if nxt else None}
+
+
+@evals_router.put("/nightly/settings", dependencies=[Depends(require_admin_session)])
+async def put_nightly_settings(payload: Dict[str, Any]):
+    """保存每晚执行时间（北京时间）与启用开关；调度器 1 分钟内生效。"""
+    try:
+        cfg = nightly_control.normalize_settings(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    cfg["last_dispatch"] = nightly_control.load_settings().get("last_dispatch")
+    nightly_control.save_settings(cfg)
+    return await get_nightly_settings()
+
+
 @evals_router.get("/nightly/{date}", dependencies=[Depends(require_admin_session)])
 async def get_nightly_day(date: str):
     """单日详情：结论 json + report.md 原文。date 严格校验防路径穿越。"""
@@ -392,3 +418,29 @@ async def get_nightly_day(date: str):
     except OSError:
         pass
     return {"nightly": entry, "report_md": report_md}
+
+
+@evals_router.post("/nightly/run-now", dependencies=[Depends(require_admin_session)])
+async def post_nightly_run_now():
+    """立即触发一次 eval-nightly workflow_dispatch（评测本身仍全走 workflow 链路）。"""
+    result = await asyncio.to_thread(nightly_control.dispatch_github, "manual")
+    cfg = nightly_control.record_dispatch(
+        nightly_control.load_settings(), _dt.now(_tz.utc), "manual", result)
+    return {
+        "ok": bool(result.get("ok")),
+        "detail": str(result.get("detail") or ""),
+        "at": cfg["last_dispatch"]["at"],
+    }
+
+
+_nightly_scheduler_task = None
+
+
+@evals_router.on_event("startup")
+async def _nightly_scheduler_startup():
+    """服务器（.env NIGHTLY_SCHEDULER=1）才启用内置调度；本地 dev 默认关，不误触发 CI。"""
+    global _nightly_scheduler_task
+    if os.getenv("NIGHTLY_SCHEDULER", "").strip().lower() not in ("1", "true", "on"):
+        return
+    if _nightly_scheduler_task is None or _nightly_scheduler_task.done():
+        _nightly_scheduler_task = asyncio.create_task(nightly_control.scheduler_loop())

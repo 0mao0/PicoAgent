@@ -119,6 +119,47 @@ class NightlyRoutesTests(unittest.TestCase):
             r = self._client().get("/api/evals/nightly")
         self.assertEqual(r.json(), {"days": []})
 
+    # ---- 调度配置接口（GET/PUT settings、POST run-now）----
+
+    def _settings_env(self):
+        import nightly_control  # noqa: F401  同一模块对象，patch 才对路由生效
+        return mock.patch.dict(os.environ,
+                               {"NIGHTLY_SETTINGS_FILE": str(self.eval_dir / "nightly_settings.json")})
+
+    def test_settings_requires_admin(self):
+        with self._settings_env(), _patch_auth(False):
+            self.assertEqual(self._client().get("/api/evals/nightly/settings").status_code, 401)
+        with self._settings_env(), _patch_auth(True, is_admin=False):
+            r = self._client().put("/api/evals/nightly/settings", json={"enabled": True, "hour": 1, "minute": 0})
+            self.assertEqual(r.status_code, 403)
+
+    def test_settings_default_put_validation_persist(self):
+        settings_file = self.eval_dir / "nightly_settings.json"
+        with self._settings_env(), _patch_auth(True, is_admin=True):
+            c = self._client()
+            r = c.get("/api/evals/nightly/settings")
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json()["enabled"], False)
+            self.assertIsNone(r.json()["next_fire_at"])          # 未启用 → 无下次触发
+            r = c.put("/api/evals/nightly/settings", json={"enabled": True, "hour": 2, "minute": 30})
+            self.assertTrue(r.json()["enabled"])
+            self.assertIsNotNone(r.json()["next_fire_at"])        # 启用后必有下次触发时刻
+            self.assertIn('"hour": 2', settings_file.read_text(encoding="utf-8"))
+            self.assertEqual(c.put("/api/evals/nightly/settings", json={"hour": 24}).status_code, 400)
+
+    def test_run_now_dispatches_manual(self):
+        import nightly_control
+        settings_file = self.eval_dir / "nightly_settings.json"
+        with self._settings_env(), \
+             mock.patch.object(nightly_control, "dispatch_github", return_value={"ok": True, "detail": ""}) as dispatched, \
+             _patch_auth(True, is_admin=True):
+            r = self._client().post("/api/evals/nightly/run-now")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["ok"])
+        self.assertEqual(dispatched.call_args[0][0], "manual")
+        stored = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(stored["last_dispatch"]["source"], "manual")
+
 
 if __name__ == "__main__":
     unittest.main()
