@@ -146,6 +146,8 @@ export interface EvalRun {
   details?: EvalRunDetail[]
   run_name?: string
   is_full_run?: boolean
+  /** 运行时 manifest（含 model=当时选用的 LLM 配置名，"重新评测"按钮语义比对用） */
+  config_snapshot?: Record<string, unknown> | null
 }
 
 /** 评测汇总得分 */

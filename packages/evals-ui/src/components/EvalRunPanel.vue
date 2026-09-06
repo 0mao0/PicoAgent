@@ -26,7 +26,7 @@
           :disabled="!datasetId || loading"
           @click="handleClick"
         >
-          整体评测
+          {{ primaryLabel }}
         </a-button>
         <a-button
           class="eval-run-panel__resume-btn"
@@ -399,6 +399,20 @@ const resumableRun = computed(() => {
 })
 
 const canResume = computed(() => !isRunning.value && !!resumableRun.value && !!props.datasetId)
+
+/** 运行时用的模型配置名：config_snapshot.model 为准，run_name 前缀兜底（旧 run 无快照） */
+const runConfigName = (run: EvalRun): string => {
+  const snap = run.config_snapshot as { model?: string } | null | undefined
+  return snap?.model || String(run.run_name || '').split('_')[0] || ''
+}
+
+/** 主按钮语义：存在中断 run 且当前选中模型与其相同 → "重新评测"（同模型全量重做）；
+ * 切换了模型则语义回到"整体评测"（对新模型做全量评测）。与"继续评测"（断点续跑）互补。 */
+const primaryLabel = computed(() => {
+  const r = resumableRun.value
+  if (r && selectedModel.value && runConfigName(r) === selectedModel.value) return '重新评测'
+  return '整体评测'
+})
 
 const onResumeClick = () => {
   if (resumableRun.value) {
