@@ -74,3 +74,14 @@ test('发送消息不会把会话写入 localStorage（不做历史记录）', a
   const poolKeys = [...storage.keys()].filter((key) => key.includes('ai-chat-pool'))
   assert.deepEqual(poolKeys, [])
 })
+
+test('loadMessages 灌入历史消息并写回会话池', async () => {
+  const chat = useAIChat({ scene: 'docs', sessionId: 'load-msgs' })
+  const history: Parameters<typeof chat.loadMessages>[0] = [
+    { id: 'u1', role: 'user', content: '历史问题', timestamp: 1 },
+    { id: 'a1', role: 'assistant', content: '历史回答', timestamp: 2 }
+  ]
+  chat.loadMessages(history)
+  assert.equal(chat.messages.value.length, 2)
+  assert.equal(getSessionSnapshot('docs:load-msgs')?.messages.length, 2)
+})

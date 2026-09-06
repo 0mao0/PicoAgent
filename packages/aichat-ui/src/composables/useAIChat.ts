@@ -178,6 +178,7 @@ export function useAIChat(options?: {
   switchSession: (newScene: string, newId: string) => void
   removeCurrentSession: () => void
   startNewChat: () => void
+  loadMessages: (newMessages: AIChatMessage[]) => void
 } {
   const contextConfig: AIChatContextConfig = {
     ...DEFAULT_CONTEXT_CONFIG,
@@ -436,6 +437,13 @@ export function useAIChat(options?: {
     saveToPool()
   }
 
+  /** 灌入一组历史消息到当前会话（历史对话恢复用），中止进行中的生成并写回会话池 */
+  const loadMessages = (newMessages: AIChatMessage[]): void => {
+    stopGeneration()
+    messages.value = [...newMessages]
+    saveToPool()
+  }
+
   const contextTokens = computed(() =>
     messages.value.reduce((sum, m) => sum + estimateTokens(m.content), 0)
   )
@@ -458,5 +466,6 @@ export function useAIChat(options?: {
     switchSession,
     removeCurrentSession,
     startNewChat,
+    loadMessages,
   }
 }
