@@ -91,7 +91,8 @@ def _release_version() -> str:
 
 
 content_parts = ["## ✅ AnGIneer 部署完成", f"> **版本:** `{_release_version()}`"]
-if prev_exists:
+# rerun 场景 PREV_SHA==HEAD 会数出 0 个提交，此时回退为展示当前提交本身
+if prev_exists and total > 0:
     content_parts.append(f"> **本次提交:** `{total}` 个")
     for line in commit_lines:
         content_parts.append(f"> {line}")
