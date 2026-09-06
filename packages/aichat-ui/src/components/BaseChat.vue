@@ -1,5 +1,5 @@
 <template>
-  <div class="base-chat-component">
+  <div class="base-chat-component" :class="{ 'base-chat--hero': hero && !displayMessages.length && !loading && !currentStreamContent }">
     <div v-if="title" class="chat-header">
       <span v-if="icon" class="header-icon">
         <component :is="icon" />
@@ -18,6 +18,9 @@
 
     <div class="chat-messages-wrap">
       <div ref="messagesRef" class="chat-messages" @click="handleMessageClick">
+        <div v-if="hero && !displayMessages.length" class="chat-hero">
+          <slot name="hero" />
+        </div>
       <div
         v-for="(msg, index) in displayMessages"
         :key="msg.id || index"
@@ -384,6 +387,8 @@ interface Props {
   renderMessage?: (content: string) => string
   allowImageUpload?: boolean
   searchCitations?: (query: string) => Promise<InlineCitationCandidate[]>
+  /** Hero 模式：无消息时整体垂直居中、输入卡片浮起居中（对话入口态） */
+  hero?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -402,7 +407,8 @@ const props = withDefaults(defineProps<Props>(), {
   streamingThinkingSteps: () => [],
   renderMessage: undefined,
   allowImageUpload: true,
-  searchCitations: undefined
+  searchCitations: undefined,
+  hero: false
 })
 
 const emit = defineEmits<{
@@ -1905,5 +1911,33 @@ defineExpose({
       }
     }
   }
+}
+
+/* ===== Hero 模式（对话入口态）===== */
+.base-chat--hero {
+  justify-content: center;
+
+  .chat-messages-wrap {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .resize-handle {
+    display: none;
+  }
+
+  .chat-input {
+    width: min(820px, 92%);
+    margin: 0 auto 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    background: var(--chat-input-bg, var(--bg-secondary, #ffffff));
+    box-shadow: var(--chat-hero-shadow, 0 8px 32px rgba(0, 0, 0, 0.12));
+  }
+}
+
+.chat-hero {
+  text-align: center;
+  padding: 24px 16px 8px;
 }
 </style>
