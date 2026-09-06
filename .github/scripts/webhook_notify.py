@@ -91,15 +91,30 @@ def _release_version() -> str:
 
 
 content_parts = ["## ✅ AnGIneer 部署完成", f"> **版本:** `{_release_version()}`"]
+
+
+def _short(line: str, limit: int = 90) -> str:
+    """单条提交 subject 截断：发布/功能 commit 常写长摘要（实测 400~600 字），
+    逐条展示曾把整卡顶爆企微 4096 上限（40058 实踩）。hash 前缀保留，只截正文。"""
+    line = line.strip()
+    if len(line) <= limit:
+        return line
+    # 保留最短完整 hash（7 位）供追踪
+    head, _, rest = line.partition(" ")
+    if head and len(rest) > limit - 8:
+        return f"{head} {rest[: limit - 9].rstrip()}…"
+    return line[: limit - 1] + "…"
+
+
 # rerun 场景 PREV_SHA==HEAD 会数出 0 个提交，此时回退为展示当前提交本身
 if prev_exists and total > 0:
     content_parts.append(f"> **本次提交:** `{total}` 个")
     for line in commit_lines:
-        content_parts.append(f"> {line}")
+        content_parts.append(f"> {_short(line)}")
     if total > len(commit_lines):
         content_parts.append(f"> … 共 {total} 个提交")
 else:
-    content_parts.append(f"> **提交:** `{sha}` - {msg}")
+    content_parts.append(f"> **提交:** `{sha}` - {_short(msg, 120)}")
 content_parts += [
     f"> **分支:** `{ref}`",
     f"> **时间:** `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`",
@@ -112,7 +127,30 @@ content_parts += [
 if run_url:
     content_parts.append("")
     content_parts.append(f"[查看 Actions]({run_url})")
+
+# 企微 markdown 上限 4096 字节（UTF-8 中文 3 字节/字，40058 实踩按字节拒绝）——
+# 单行截断之外加整卡字节级兜底：优先丢最早的提交行，仍超则截断正文
+WECOM_CONTENT_MAX_BYTES = 4096
 content = "\n".join(content_parts)
+while len(content.encode("utf-8")) > WECOM_CONTENT_MAX_BYTES:
+    commit_idx = next(
+        (i for i, p in enumerate(content_parts) if p.startswith("> ") and len(p) > 8 and not p.startswith(("> **", "> 前台", "> 管理后台", "> API 文档", "> 分支", "> 时间", "> 提交", "> 本次"))),
+        None,
+    )
+    if commit_idx is None or len(content_parts) <= 2:
+        break
+    content_parts.pop(commit_idx)
+    content = "\n".join(content_parts)
+if len(content.encode("utf-8")) > WECOM_CONTENT_MAX_BYTES:
+    # 极端兜底：整体截断到 4096 字节内的字符边界
+    raw = content.encode("utf-8")
+    content = raw[: WECOM_CONTENT_MAX_BYTES].decode("utf-8", errors="ignore") + "…"
+
+if "--dry-run" in sys.argv:
+    print("===== dry-run: markdown content =====")
+    print(content)
+    print(f"===== content bytes: {len(content.encode('utf-8'))} / 4096")
+    sys.exit(0)
 
 payload = json.dumps(
     {"msgtype": "markdown", "markdown": {"content": content}},
