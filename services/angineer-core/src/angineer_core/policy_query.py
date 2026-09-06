@@ -68,6 +68,10 @@ def run_policy_query(
     doc_ids = list(doc_ids or [])
     inline_citations = list(inline_citations or [])
 
+    # 哨兵 b：全链路"吞掉但继续降级"的 LLM 失败统一落点（评测据此区分
+    # 校准拒答与故障吞错式拒答；2026-09-06 53 题全灭事故驱动）
+    llm_errors: List[str] = []
+
     try:
         from angineer_core.agent_policy import build_attempts, format_route_note
         from angineer_core.agent_tools import MarkerAllocator
@@ -80,12 +84,13 @@ def run_policy_query(
         try:
             sops = list(sop_loader.load_all() or []) if sop_loader is not None else []
             intent_result = IntentClassifier(sops).classify_intent(
-                query, config_name=config_name, mode=mode
+                query, config_name=config_name, mode=mode, error_sink=llm_errors
             )
         except Exception as exc:  # noqa: BLE001
             if getattr(exc, "fatal", False):
                 raise
             logger.warning("意图分级失败，默认 L1: %s", exc)
+            llm_errors.append(f"意图分级异常: {str(exc)[:300]}")
         intent_seconds = round(time.time() - t0, 3)
 
         # 2. 策略展开 + 执行
@@ -110,6 +115,7 @@ def run_policy_query(
             max_turns=1,
             attempts=attempts,
             route_note=format_route_note(intent_result),
+            error_sink=llm_errors,
         )
         from angineer_core.trace_collector import TraceCollector
 
@@ -226,7 +232,8 @@ def run_policy_query(
             "strategy": strategy,
             "system_prompt": "",
             "retrieval_debug": retrieval_debug,
-            "runtime_flags": [],
+            "llm_errors": llm_errors,
+            "runtime_flags": (["llm_error_degraded"] if llm_errors else []),
             "route_debug": route_debug,
             "flow_debug": flow_debug,
             "stage_timings": stage_timings,

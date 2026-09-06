@@ -161,6 +161,9 @@ class AgentLoopConfig:
     tool_timeout_s: int = 120
     followup_question: Optional[bool] = None
     pending_messages_provider: Optional[Callable[[], List[AgentMessage]]] = None
+    # 被吞掉的 LLM 失败落点（哨兵 b）：调用方传入列表即可回收"降级继续跑"的失败明细，
+    # 评测据此区分"校准过的拒答"与"故障吞错式拒答"（2026-09-06 53 题全灭事故驱动）
+    error_sink: Optional[List[str]] = None
 
 
 def _safe_emit(emit: Optional[Callable[[AgentEvent], None]], event: AgentEvent) -> None:
@@ -443,6 +446,9 @@ def _run_llm_turn(
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLM 流式调用异常: %s", exc)
         finish_reason = finish_reason or "error"
+        if config.error_sink is not None:
+            # 吞错继续降级，但把失败原文交给调用方留痕（评测哨兵 b）
+            config.error_sink.append(f"turn{turn} LLM 流式调用异常: {str(exc)[:300]}")
     tail = fence_filter.flush()
     if tail:
         _safe_emit(emit, AgentEvent(type="message_delta", run_id=run_id, turn=turn, payload={"delta": tail}))

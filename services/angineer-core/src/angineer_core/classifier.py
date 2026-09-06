@@ -843,7 +843,9 @@ class IntentClassifier:
         user_query: str,
         config_name: str = None,
         mode: str = "instruct",
+        error_sink: Optional[List[str]] = None,
     ) -> IntentResult:
+        """error_sink：LLM 分类被吞掉的失败留痕（评测哨兵 b），不影响降级路径本身。"""
         logger.info(f"[DEBUG-SOP-ROUTE] ===== 意图分类开始 =====")
         logger.info(f"[DEBUG-SOP-ROUTE] 用户查询: {user_query[:100]}{'...' if len(user_query) > 100 else ''}")
         logger.info(f"[DEBUG-SOP-ROUTE] 配置: config_name={config_name}, mode={mode}")
@@ -875,7 +877,7 @@ class IntentClassifier:
 
         # 步骤 2: LLM 直接分类 L1/L2/L3/L4（主力分类器）
         logger.debug("[DEBUG-SOP-ROUTE] 非L0查询，进入 LLM 主力分类...")
-        llm_result = self._llm_classify_intent(user_query, config_name=config_name, mode=mode)
+        llm_result = self._llm_classify_intent(user_query, config_name=config_name, mode=mode, error_sink=error_sink)
         if llm_result:
             logger.info(f"[DEBUG-SOP-ROUTE] LLM分类结果: level=L{llm_result.intent_level}, type={llm_result.intent_type}, mode={llm_result.service_mode}")
             return llm_result
@@ -904,8 +906,12 @@ class IntentClassifier:
         user_query: str,
         config_name: str = None,
         mode: str = "instruct",
+        error_sink: Optional[List[str]] = None,
     ) -> Optional[IntentResult]:
-        """LLM 主力分类器：直接判定 L1/L2/L3/L4，含置信度阈值过滤。"""
+        """LLM 主力分类器：直接判定 L1/L2/L3/L4，含置信度阈值过滤。
+
+        error_sink 只收"LLM 侧故障"（异常/空响应——53 题全灭事故的典型签名），
+        不收解析失败与低置信度（那是模型真实输出，属正常降级）。"""
         system_prompt = CLASSIFY_INTENT_SYSTEM_PROMPT
         try:
             logger.debug("[DEBUG-SOP-ROUTE] 调用 LLM 进行意图分类...")
@@ -923,6 +929,8 @@ class IntentClassifier:
 
             if not response_text:
                 logger.warning("[DEBUG-SOP-ROUTE] LLM 意图分类响应为空")
+                if error_sink is not None:
+                    error_sink.append("意图分类 LLM 空响应")
                 return None
             parsed = extract_json_from_text(response_text, strict=True)
             if not parsed:
@@ -949,6 +957,8 @@ class IntentClassifier:
             return result
         except Exception as e:
             logger.warning(f"[DEBUG-SOP-ROUTE] LLM 意图分类异常: {e}")
+            if error_sink is not None:
+                error_sink.append(f"意图分类 LLM 异常: {str(e)[:300]}")
             return None
 
     # 两阶段 SOP 路由：关键词粗筛 → LLM 精排 + 拒绝

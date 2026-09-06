@@ -213,6 +213,15 @@ def _compute_summary(details: List[Dict[str, Any]]) -> Dict[str, Any]:
     wrong = sum(1 for d in details if d.get("quality") == "wrong")
     skipped = sum(1 for d in details if d.get("status") == "completed" and d.get("quality") is None)
     errored = sum(1 for d in details if d.get("status") == "error")
+
+    def _scores_of(d: Dict[str, Any]) -> Dict[str, Any]:
+        s = d.get("scores")
+        return s if isinstance(s, dict) else {}
+
+    # 哨兵 b：run 级可见的"被吞 LLM 失败"与"吞错式拒答"计数——
+    # 拒答集满分但 llm_error_questions 高企 = 假满分（2026-09-06 17:08 实踩 100 分）
+    llm_error_questions = sum(1 for d in details if _scores_of(d).get("llm_error_count"))
+    refusal_via_error_questions = sum(1 for d in details if _scores_of(d).get("refusal_via_error"))
     overall_score = round(correct / total, 4) if total else 0.0
     retrieval_scores = []
     answer_scores = []
@@ -313,6 +322,9 @@ def _compute_summary(details: List[Dict[str, Any]]) -> Dict[str, Any]:
         # judge 失败必须独立可见（2026-09-05 教训：fallback 静默缩分母，污染分数无提示）
         "judge_failed_count": anomaly.judge_failed_count(details),
         "anomaly_count": anomaly.judge_failed_count(details) + errored,
+        # 哨兵 b：作答链路被吞 LLM 失败的题数与其中"吞错式拒答"题数（满分可信度判据）
+        "llm_error_questions": llm_error_questions,
+        "refusal_via_error_questions": refusal_via_error_questions,
         "retrieval_score": retrieval_avg,
         "answer_score": answer_avg,
         "sql_score": sql_avg,

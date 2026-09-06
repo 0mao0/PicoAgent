@@ -273,6 +273,10 @@ class AnswerEvaluator(BaseEvaluator):
             "intent": data.get("intent", {}),
             "scope": data.get("scope", {}),
             "evidences": list(data.get("evidences") or []),
+            # 哨兵 b：链路被吞掉的 LLM 失败随 prediction 持久化——判分标注与
+            # 断点续跑/重判分复用旧 prediction 时都依赖这份留痕
+            "llm_errors": list(data.get("llm_errors") or []),
+            "llm_error_count": len(data.get("llm_errors") or []),
         }
         result = enrich_prediction_trace(question, data, prediction)
 
@@ -282,6 +286,20 @@ class AnswerEvaluator(BaseEvaluator):
         return result
 
     def evaluate(self, question: Dict[str, Any], gold: Dict[str, Any], prediction: Dict[str, Any]) -> Dict[str, Any]:
+        """判分统一出口：核心判分 + 哨兵 b 的 LLM 失败留痕标注。"""
+        scores = self._evaluate_core(question, gold, prediction)
+        try:
+            error_count = int(prediction.get("llm_error_count") or 0)
+        except (TypeError, ValueError):
+            error_count = 0
+        scores["llm_error_count"] = error_count
+        if error_count > 0 and is_refusal(str(prediction.get("answer") or "")):
+            # 拒答 + 存在被吞掉的 LLM 失败 → 大概率是"故障吞错式拒答"，不是校准过的正确拒答；
+            # 分数维持原判（行为兼容），由汇总/门禁侧读取此标记识破满分假象
+            scores["refusal_via_error"] = True
+        return scores
+
+    def _evaluate_core(self, question: Dict[str, Any], gold: Dict[str, Any], prediction: Dict[str, Any]) -> Dict[str, Any]:
         """计算回答评测指标，使用 LLM 作为主判，关键词作为 prompt 提示。"""
         answer = str(prediction.get("answer") or "").strip()
         citations = list(prediction.get("citations") or [])
