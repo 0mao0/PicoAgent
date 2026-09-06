@@ -324,27 +324,30 @@ function fillWidthToContainer(): void {
   if (!el) return
   const width = viewportWidth()
   if (!width) return
-  // 内容已宽于容器（横向滚动中）时不再缩放
   const total = contentWidth.value
   if (total === 0) return
-  if (!filledToContainer.value && width <= total) return
 
-  // 弹性列（flex: true）吸收剩余宽度；未声明弹性列时退化为所有可拖拽列均分
+  // 弹性列（flex: true）吸收宽度差；未声明弹性列时退化为所有可拖拽列按比例分摊
   const flexCols = effectiveColumns.value.filter((c) => c.flex === true && c.resizable && c.key)
   const scaleTargets = flexCols.length > 0
     ? flexCols
     : effectiveColumns.value.filter((c) => c.resizable && c.key && !c.fixed)
   const scaleKeys = scaleTargets.map((c) => c.key as string)
+  if (scaleKeys.length === 0) return
   const scaleBase = scaleKeys.reduce((sum, k) => sum + (internalWidths[k] ?? 0), 0)
   if (scaleBase === 0) return
 
+  // 展开图标列不在 columns 里但占 40px，弹性列分摊时必须先扣掉，否则总宽超容器出横向滚动
   const fixedTotal = effectiveColumns.value.reduce((sum, col) => {
     const key = col.key
     if (key && scaleKeys.includes(key)) return sum
     return sum + (typeof col.width === 'number' ? col.width : 0)
-  }, 0)
+  }, 0) + (hasExpandSlot.value ? EXPAND_COL_W : 0)
+
+  // 双向自适应：宽则拉伸、窄则收缩（各列不低于 minWidth）；缩到最小仍放不下才允许横向滚动
+  const minScale = scaleKeys.reduce((sum, k) => sum + (columnMinWidths[k] ?? 50), 0)
   const leftover = width - fixedTotal
-  if (leftover <= 0) return
+  if (width < total && leftover < minScale) return
   const scale = leftover / scaleBase
   for (const key of scaleKeys) {
     internalWidths[key] = Math.max(columnMinWidths[key] ?? 50, Math.round((internalWidths[key] ?? 0) * scale))
