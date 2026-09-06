@@ -42,7 +42,13 @@
           description="没有题目从答对变成答错"
         />
         <ul v-else class="ndd-qlist">
-          <li v-for="item in regressions" :key="item.qid" class="ndd-qitem">
+          <li
+            v-for="item in regressions"
+            :key="item.qid"
+            class="ndd-qitem"
+            :class="{ 'ndd-qitem--expandable': !!item.evidence }"
+            @click="item.evidence && toggleExpand(item.qid)"
+          >
             <a-tooltip :title="`${bucketPlain(item.bucket)}${item.bucket_detail ? `（${item.bucket_detail}）` : ''}`">
               <a-tag :color="bucketColor(item.bucket)" class="ndd-qitem__tag">{{ bucketShort(item.bucket) }}</a-tag>
             </a-tooltip>
@@ -52,6 +58,18 @@
             <a-tooltip title="基线答对，今晚答错">
               <span class="ndd-qitem__mark ndd-qitem__mark--down">✓→✗</span>
             </a-tooltip>
+            <RightOutlined v-if="item.evidence" class="ndd-qitem__caret" :class="{ 'ndd-qitem__caret--open': !!expanded[item.qid] }" />
+            <div v-if="item.evidence && expanded[item.qid]" class="ndd-ev">
+              <div v-for="row in evidenceRows(item.evidence)" :key="row.label" class="ndd-ev__row">
+                <span class="ndd-ev__label">{{ row.label }}</span>
+                <span class="ndd-ev__from">{{ row.from }}</span>
+                <span class="ndd-ev__arrow">→</span>
+                <span class="ndd-ev__to">{{ row.to }}</span>
+              </div>
+              <p v-if="item.evidence.reason" class="ndd-ev__text">评判理由：{{ item.evidence.reason }}</p>
+              <blockquote v-if="item.evidence.answer_excerpt" class="ndd-ev__answer">{{ item.evidence.answer_excerpt }}</blockquote>
+              <p v-if="item.evidence.error" class="ndd-ev__error">执行错误：{{ item.evidence.error }}</p>
+            </div>
           </li>
         </ul>
       </a-collapse-panel>
@@ -80,14 +98,28 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Empty } from 'ant-design-vue'
+import { RightOutlined } from '@ant-design/icons-vue'
 import * as echarts from 'echarts'
 import { renderMarkdownToHtml } from '@angineer/aichat-ui/utils/markdown'
+
+interface EvidencePair { base?: unknown; new?: unknown }
+
+interface QuestionEvidence {
+  route?: Record<string, EvidencePair>
+  retrieval?: Record<string, EvidencePair>
+  semantic?: EvidencePair & { threshold?: number }
+  has_answer?: EvidencePair
+  reason?: string
+  answer_excerpt?: string
+  error?: string
+}
 
 interface QuestionItem {
   qid: string
   question?: string
   bucket?: string
   bucket_detail?: string
+  evidence?: QuestionEvidence
 }
 
 interface NightlyMatrix { pp?: number; pf?: number; fp?: number; ff?: number }
@@ -178,6 +210,38 @@ const regressions = computed<QuestionItem[]>(() => {
   return Object.entries(day.regressions || {}).map(([qid, bucket]) => ({ qid, bucket_detail: bucket }))
 })
 const fixed = computed<QuestionItem[]>(() => cur.value.fixed_items || [])
+// ── 回退题证据展开（问题具体在哪：检索/语义分/是否作答/路由 前后对比 + 评判理由 + 今晚答案摘录）──
+const expanded = ref<Record<string, boolean>>({})
+const toggleExpand = (qid: string) => { expanded.value[qid] = !expanded.value[qid] }
+
+const ROUTE_LABEL: Record<string, string> = { intent: '路由·意图', task_type: '路由·任务类型', strategy: '路由·处理路径' }
+
+const fmtNum = (v: unknown): string =>
+  typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v ?? '—')
+const fmtHit = (v: unknown): string => {
+  if (v == null || v === '') return '—'
+  return Number(v) >= 1 ? '命中' : '未命中'
+}
+const fmtYesNo = (v: unknown): string =>
+  v === true || v === 1 ? '是' : v === false || v === 0 ? '否' : '—'
+
+function evidenceRows(ev: QuestionEvidence): Array<{ label: string; from: string; to: string }> {
+  const rows: Array<{ label: string; from: string; to: string }> = []
+  const hit5 = ev.retrieval?.['hit@5_doc']
+  if (hit5) rows.push({ label: '检索 hit@5', from: fmtHit(hit5.base), to: fmtHit(hit5.new) })
+  const cit = ev.retrieval?.citation_hit
+  if (cit) rows.push({ label: '引用命中', from: fmtHit(cit.base), to: fmtHit(cit.new) })
+  if (ev.semantic) {
+    const th = ev.semantic.threshold != null ? `（过线 ${ev.semantic.threshold}）` : ''
+    rows.push({ label: '语义分', from: fmtNum(ev.semantic.base), to: `${fmtNum(ev.semantic.new)}${th}` })
+  }
+  if (ev.has_answer) rows.push({ label: '给出回答', from: fmtYesNo(ev.has_answer.base), to: fmtYesNo(ev.has_answer.new) })
+  for (const [field, pair] of Object.entries(ev.route || {})) {
+    rows.push({ label: ROUTE_LABEL[field] || `路由·${field}`, from: fmtNum(pair.base), to: fmtNum(pair.new) })
+  }
+  return rows
+}
+
 /** report.md 走 aichat-ui 同款渲染器（表格/标题/列表；admin-web 本就经 AIChat/evals-ui 打入了该 chunk） */
 const reportHtml = computed(() => renderMarkdownToHtml(props.detail?.report_md || '', ''))
 
@@ -359,6 +423,7 @@ onBeforeUnmount(() => {
 .ndd-qitem {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
@@ -366,6 +431,70 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   padding: 3px 8px;
   background: var(--card-bg, var(--bg-primary, #fff));
+}
+.ndd-qitem--expandable {
+  cursor: pointer;
+}
+.ndd-qitem__caret {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-secondary, rgba(0, 0, 0, 0.35));
+  transition: transform 0.2s;
+}
+.ndd-qitem__caret--open {
+  transform: rotate(90deg);
+}
+/* 展开后的逐题前后对比证据 */
+.ndd-ev {
+  width: 100%;
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-secondary, rgba(128, 128, 128, 0.06));
+  font-size: 12px;
+  line-height: 20px;
+}
+.ndd-ev__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ndd-ev__label {
+  color: var(--text-secondary, rgba(0, 0, 0, 0.45));
+  min-width: 88px;
+}
+.ndd-ev__from {
+  color: var(--text-secondary, rgba(0, 0, 0, 0.65));
+  text-decoration: line-through;
+  text-decoration-color: rgba(0, 0, 0, 0.25);
+}
+.ndd-ev__arrow {
+  color: var(--text-secondary, rgba(0, 0, 0, 0.35));
+}
+.ndd-ev__to {
+  color: var(--text-primary, rgba(0, 0, 0, 0.85));
+  font-weight: 600;
+}
+.ndd-ev__text {
+  margin: 4px 0 0;
+  color: var(--text-primary, rgba(0, 0, 0, 0.85));
+}
+.ndd-ev__answer {
+  margin: 6px 0 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border-color, rgba(5, 5, 5, 0.12));
+  color: var(--text-secondary, rgba(0, 0, 0, 0.65));
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ndd-ev__error {
+  margin: 4px 0 0;
+  color: #ff4d4f;
 }
 .ndd-qitem__tag {
   flex-shrink: 0;
