@@ -659,8 +659,15 @@ def batch_hard_delete_records(request: BatchHardDeleteRequest):
                 soft_delete_record(doc_id)
             if not hard_delete_record(record_id):
                 if str(record.get("status") or "") != "deleted":
-                    failed.append({"record_id": record_id, "reason": "仅允许删除用户已标记删除的记录"})
-                    continue
+                    # 孤儿记录（节点已不在知识库）：先标记再重试硬删，与单条接口同语义
+                    if doc_id and ks.get_node(doc_id) is None:
+                        soft_delete_record_by_id(record_id)
+                        if not hard_delete_record(record_id):
+                            failed.append({"record_id": record_id, "reason": "仅允许删除用户已标记删除的记录"})
+                            continue
+                    else:
+                        failed.append({"record_id": record_id, "reason": "仅允许删除用户已标记删除的记录"})
+                        continue
             deleted += 1
         except Exception as exc:
             logger.error(f"批量硬删记录 {record_id} 失败: {exc}")
@@ -709,40 +716,77 @@ def list_parse_records(
 
 
 @docs_router.put("/records/{record_id}/soft-delete")
-def soft_delete_record_by_id(record_id: int):
+def mark_record_soft_deleted(record_id: int):
     """标记单条解析记录为已删除（按 record_id）。"""
+    # 注意：函数名不得与 models.parse_record.soft_delete_record_by_id 同名，
+    # 否则模块级定义会遮蔽导入并在函数体内自我递归（v0.2.32 前实踩）。
     success = soft_delete_record_by_id(record_id)
     if not success:
         raise HTTPException(status_code=404, detail="记录不存在或已删除")
     return {"status": "success", "message": f"记录 {record_id} 已标记为 deleted"}
 
 
-def _clean_orphaned_records(ks) -> int:
-    """清理孤立记录：将 doc_id 在知识库中已不存在的记录标记为 deleted。"""
-    cleaned = 0
-    for record in list_records():
-        doc_id = record.get("doc_id", "")
-        if not doc_id:
-            continue
-        if record.get("status") == "deleted":
-            continue
-        if ks.get_node(doc_id) is None:
-            soft_delete_record(doc_id)
-            cleaned += 1
-    return cleaned
+# 事故护栏（2026-09-06：内存快照陈旧导致 clean-orphaned 一次性误标 102 条正常记录）：
+# 单次拟清理量超过阈值时拒绝执行，需带 confirm=true 复核后重放。
+ORPHAN_CLEAN_GUARD_LIMIT = 20
+
+
+def _live_node_ids_from_db(ks) -> set:
+    """存活节点判定必须以数据库为准：进程内存快照在换库/热替换/新上传后会陈旧，
+    拿它判"孤儿"会把整库正常文档误杀（2026-09-06 事故根因）。"""
+    with ks.meta_store.connect() as conn:
+        rows = conn.execute("SELECT id FROM nodes WHERE deleted=0").fetchall()
+    return {row[0] for row in rows}
+
+
+def _clean_orphaned_records(ks, confirm: bool = False) -> int:
+    """清理孤立记录：将 doc_id 在知识库（数据库实况）中已不存在的记录标记为 deleted。"""
+    live_ids = _live_node_ids_from_db(ks)
+    orphans = [
+        record for record in list_records()
+        if record.get("doc_id")
+        and record.get("status") != "deleted"
+        and record["doc_id"] not in live_ids
+    ]
+    if len(orphans) > ORPHAN_CLEAN_GUARD_LIMIT and not confirm:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    f"拟清理 {len(orphans)} 条孤立记录，超过单次安全阈值 {ORPHAN_CLEAN_GUARD_LIMIT}，"
+                    "已拒绝执行（防止误判导致批量误删）。请先核对 sample 是否确为孤儿，"
+                    "再以 confirm=true 重放。"
+                ),
+                "count": len(orphans),
+                "limit": ORPHAN_CLEAN_GUARD_LIMIT,
+                "sample": [o["doc_id"] for o in orphans[:10]],
+            },
+        )
+    for record in orphans:
+        soft_delete_record(record["doc_id"])
+    return len(orphans)
 
 
 @docs_router.post("/records/clean-orphaned")
-def clean_orphaned_records():
-    """清理孤立记录（手动触发）；删除节点路径会自动调用同逻辑兜底。"""
-    cleaned = _clean_orphaned_records(get_docs_service())
+def clean_orphaned_records(confirm: bool = False):
+    """清理孤立记录（手动触发）；删除节点路径会自动调用同逻辑兜底。
+    超过阈值需 confirm=true 显式复核。"""
+    cleaned = _clean_orphaned_records(get_docs_service(), confirm=confirm)
     return {"status": "success", "message": f"已清理 {cleaned} 条孤立记录"}
 
 
 @docs_router.delete("/records/{record_id}/hard-delete")
 def admin_hard_delete_record(record_id: int):
-    """管理员永久删除（仅允许用户已标记删除的记录）。"""
+    """管理员永久删除（用户已标记删除的记录，或节点已丢失的孤儿记录）。"""
     success = hard_delete_record(record_id)
+    if not success:
+        # 孤儿记录（如知识库整体被外部替换后遗留的旧记录）：节点已不存在，
+        # 无法走"用户已删"标记流程，与 _clean_orphaned_records 同语义先标记再硬删。
+        record = get_record_by_id(record_id)
+        doc_id = str((record or {}).get("doc_id") or "")
+        if doc_id and get_docs_service().get_node(doc_id) is None:
+            soft_delete_record_by_id(record_id)
+            success = hard_delete_record(record_id)
     if not success:
         raise HTTPException(status_code=400, detail="仅允许删除用户已标记删除的记录")
     return {"status": "success", "message": "已永久删除"}

@@ -45,7 +45,8 @@ class DocsRoutesCancelWiringTest(unittest.TestCase):
                     "get_docs_service",
                     return_value=MagicMock(delete_node=MagicMock(return_value=True)),
                 ), \
-                patch.object(docs_routes, "soft_delete_record", return_value=True):
+                patch.object(docs_routes, "soft_delete_record", return_value=True), \
+                patch.object(docs_routes, "list_records", return_value=[]):
             result = docs_routes.delete_knowledge_node("n1")
         helper.assert_called_once()
         self.assertEqual(result["status"], "success")
