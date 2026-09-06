@@ -2,7 +2,6 @@
   <!-- 夜间维护：nightly 门禁结果的历史与明细（数据源 data/evals/nightly/，仅管理员） -->
   <div class="eval-nightly-panel">
     <div class="nightly-schedule">
-      <span class="nightly-schedule__status">{{ scheduleStatusText }}</span>
       <a-space size="small" wrap>
         <span class="nightly-schedule__label">每晚定时执行（北京时间）</span>
         <a-switch v-model:checked="sched.enabled" size="small" />
@@ -14,11 +13,16 @@
           size="small"
           width="88px"
         />
-        <a-button size="small" type="primary" ghost :loading="sched.saving" @click="saveSchedule">
-          保存
-        </a-button>
-        <a-button size="small" :loading="sched.running" @click="runNow">立即运行</a-button>
+        <template v-if="scheduleDirty">
+          <a-button size="small" type="primary" :loading="sched.saving" @click="saveSchedule">
+            保存
+          </a-button>
+          <a-button size="small" @click="cancelSchedule">取消</a-button>
+        </template>
       </a-space>
+      <a-button size="small" :disabled="sched.running" @click="openRunModal">
+        {{ sched.running ? '流水线运行中…' : '立即运行' }}
+      </a-button>
     </div>
     <DataTable
       :columns="columns"
@@ -68,11 +72,42 @@
         </a-spin>
       </template>
     </DataTable>
+
+    <a-modal
+      v-model:open="runModal.open"
+      title="本次夜间流水线将执行"
+      ok-text="开始运行"
+      cancel-text="关闭"
+      :confirm-loading="runModal.launching"
+      @ok="confirmLaunch"
+    >
+      <a-spin :spinning="runModal.loading">
+        <a-descriptions v-if="runModal.plan" size="small" :column="1" bordered>
+          <a-descriptions-item label="测试集">
+            {{ runModal.plan.dataset?.title }}（{{ runModal.plan.dataset?.question_count ?? '?' }} 题）
+          </a-descriptions-item>
+          <a-descriptions-item label="作答模型">{{ runModal.plan.answer_model }}</a-descriptions-item>
+          <a-descriptions-item label="评判模型（候选链）">
+            {{ (runModal.plan.judge_models || []).join(' → ') }}
+          </a-descriptions-item>
+          <a-descriptions-item label="并发 / 单次时限">
+            {{ runModal.plan.concurrency }} · {{ runModal.plan.timeout_minutes }} 分钟
+          </a-descriptions-item>
+          <a-descriptions-item label="异常自动补判">
+            最多 {{ runModal.plan.retry_rounds }} 轮（judge 抖动仅重判分，执行错误整题重跑）
+          </a-descriptions-item>
+          <a-descriptions-item label="结果去向">
+            本页新增当日结论条目 + 企微通知（评测逐题结果进「日常测试」历史）
+          </a-descriptions-item>
+        </a-descriptions>
+        <a-empty v-else-if="!runModal.loading" description="执行计划读取失败" />
+      </a-spin>
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { DataTable } from '@angineer/table-ui'
@@ -183,12 +218,21 @@ const fetchList = async () => {
 }
 
 // ── 定时调度设置（存服务器 data/evals/nightly_settings.json，1 分钟内生效）──
+// 交互约定：默认只读展示"开关+时间"，改动后才出现 保存/取消；历史看下方列表，工具条不复述。
 interface NightlySettingsRsp {
   enabled: boolean
   hour: number
   minute: number
+  running?: boolean
   next_fire_at?: string | null
-  last_dispatch?: { at?: string; ok?: boolean; source?: string; detail?: string } | null
+}
+interface NightlyRunPlan {
+  dataset?: { id: string; title: string; question_count?: number }
+  answer_model?: string
+  judge_models?: string[]
+  concurrency?: number
+  timeout_minutes?: number
+  retry_rounds?: number
 }
 
 const sched = reactive({
@@ -196,41 +240,61 @@ const sched = reactive({
   time: '01:00',
   saving: false,
   running: false,
-  nextFireAt: '',
-  lastDispatch: null as NightlySettingsRsp['last_dispatch'],
+  savedEnabled: false,
+  savedTime: '01:00',
 })
 
-const scheduleStatusText = computed(() => {
-  const parts: string[] = []
-  if (sched.enabled && sched.nextFireAt) parts.push(`下次 ${fmtTime(sched.nextFireAt)}`)
-  if (!sched.enabled) parts.push('定时未启用')
-  if (sched.lastDispatch?.at) {
-    parts.push(`上次触发 ${fmtTime(sched.lastDispatch.at)}${sched.lastDispatch.ok ? '（成功）' : '（失败）'}`)
-  }
-  return parts.join('　')
+const scheduleDirty = computed(() => sched.enabled !== sched.savedEnabled || sched.time !== sched.savedTime)
+
+const runModal = reactive({
+  open: false,
+  loading: false,
+  launching: false,
+  plan: null as NightlyRunPlan | null,
 })
 
-const applySettings = (s: NightlySettingsRsp) => {
-  sched.enabled = !!s.enabled
-  sched.time = `${String(s.hour ?? 1).padStart(2, '0')}:${String(s.minute ?? 0).padStart(2, '0')}`
-  sched.nextFireAt = s.next_fire_at || ''
-  sched.lastDispatch = s.last_dispatch || null
-}
+let runPollTimer: ReturnType<typeof setInterval> | undefined
 
 const loadSchedule = async () => {
   try {
-    applySettings(await evalsApi.getNightlySettings() as NightlySettingsRsp)
+    const s = await evalsApi.getNightlySettings() as NightlySettingsRsp
+    const time = `${String(s.hour ?? 1).padStart(2, '0')}:${String(s.minute ?? 0).padStart(2, '0')}`
+    if (!scheduleDirty.value) {
+      // 用户没在编辑时才覆盖编辑区，避免轮询冲掉未保存的修改
+      sched.enabled = sched.savedEnabled = !!s.enabled
+      sched.time = sched.savedTime = time
+    }
+    sched.running = !!s.running
+    if (s.running && !runPollTimer) startRunPolling()
+    if (!s.running && runPollTimer) stopRunPolling()
   } catch {
     // 读取失败保持默认值展示，不打扰主列表
   }
+}
+
+/** 流水线运行期间每分钟刷状态；结束后自动刷新结论列表（当天新条目即时可见） */
+const startRunPolling = () => {
+  runPollTimer = setInterval(async () => {
+    await loadSchedule()
+    if (!sched.running) {
+      stopRunPolling()
+      fetchList()
+    }
+  }, 60_000)
+}
+const stopRunPolling = () => {
+  if (runPollTimer) clearInterval(runPollTimer)
+  runPollTimer = undefined
 }
 
 const saveSchedule = async () => {
   sched.saving = true
   try {
     const [hour, minute] = sched.time.split(':').map(Number)
-    applySettings(await evalsApi.saveNightlySettings({ enabled: sched.enabled, hour, minute }) as NightlySettingsRsp)
-    message.success(sched.enabled ? `已保存：每晚 ${sched.time} 执行` : '已保存：定时执行关闭')
+    const s = await evalsApi.saveNightlySettings({ enabled: sched.enabled, hour, minute }) as NightlySettingsRsp
+    sched.savedEnabled = !!s.enabled
+    sched.savedTime = `${String(s.hour ?? 1).padStart(2, '0')}:${String(s.minute ?? 0).padStart(2, '0')}`
+    message.success(sched.enabled ? `已保存：每晚 ${sched.savedTime} 执行` : '已保存：定时执行关闭')
   } catch (e) {
     message.error(String((e as Error)?.message || '保存失败'))
   } finally {
@@ -238,20 +302,39 @@ const saveSchedule = async () => {
   }
 }
 
-const runNow = async () => {
-  sched.running = true
+const cancelSchedule = () => {
+  sched.enabled = sched.savedEnabled
+  sched.time = sched.savedTime
+}
+
+const openRunModal = async () => {
+  runModal.open = true
+  runModal.loading = true
   try {
-    const r = await evalsApi.runNightlyNow() as { ok: boolean; detail?: string; at?: string }
+    runModal.plan = await evalsApi.getNightlyRunPlan() as NightlyRunPlan
+  } catch {
+    runModal.plan = null
+  } finally {
+    runModal.loading = false
+  }
+}
+
+const confirmLaunch = async () => {
+  runModal.launching = true
+  try {
+    const r = await evalsApi.runNightlyNow() as { ok: boolean; detail?: string }
     if (r.ok) {
-      message.success(`已于 ${fmtTime(r.at || '')} 启动夜间流水线，预计数十分钟至数小时完成，结果见企微通知与本页历史`)
+      message.success('夜间流水线已启动：完成前本页将显示运行状态，结束后自动刷新结论并推企微通知')
+      runModal.open = false
+      sched.running = true
+      startRunPolling()
     } else {
       message.warning(r.detail || '未能启动')
     }
-    await loadSchedule()
   } catch (e) {
-    message.error(String((e as Error)?.message || '触发失败'))
+    message.error(String((e as Error)?.message || '启动失败'))
   } finally {
-    sched.running = false
+    runModal.launching = false
   }
 }
 
@@ -259,6 +342,7 @@ onMounted(() => {
   fetchList()
   loadSchedule()
 })
+onBeforeUnmount(stopRunPolling)
 </script>
 
 <style scoped>

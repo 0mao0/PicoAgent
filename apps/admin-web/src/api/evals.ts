@@ -86,8 +86,11 @@ export const evalsApi = {
   saveNightlySettings: (payload: { enabled: boolean; hour: number; minute: number }) =>
     api.put('/evals/nightly/settings', payload),
 
-  /** 夜间维护：立即触发一次 workflow_dispatch */
+  /** 夜间维护：立即启动一次全内置流水线（后台跑，结果异步出） */
   runNightlyNow: () => api.post('/evals/nightly/run-now'),
+
+  /** 夜间维护：立即运行前的执行计划预览（测试集/模型/并发，仅配置名） */
+  getNightlyRunPlan: () => api.get('/evals/nightly/run-plan'),
 }
 
 export default evalsApi
