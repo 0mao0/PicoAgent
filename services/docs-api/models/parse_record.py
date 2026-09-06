@@ -120,6 +120,10 @@ def list_records(
         params.append(uploaded_by_filter)
     if deleted_filter:
         query += " AND status = 'deleted'"
+    else:
+        # False 语义是"不含已删"，不是"忽略该维度"（旧实现两个分支都返回全部，
+        # 依赖方均按此理解：前端默认列表不含用户已删，开关打开只看已删）。
+        query += " AND status <> 'deleted'"
     if library_id:
         query += " AND library_id = ?"
         params.append(library_id)

@@ -47,7 +47,8 @@ class DeleteCascadeTests(unittest.TestCase):
                 mock_ks.return_value.get_node.return_value = node
                 mock_ks.return_value.delete_node.return_value = True
                 docs_routes.delete_knowledge_node("d-soft")
-            rows = [r for r in parse_record.list_records() if r.get("doc_id") == "d-soft"]
+            # 默认清单不含已删（deleted_filter=False 语义），断言已删项必须走"只看已删"开关
+            rows = [r for r in parse_record.list_records(deleted_filter=True) if r.get("doc_id") == "d-soft"]
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["status"], "deleted")
@@ -79,7 +80,7 @@ class DeleteCascadeTests(unittest.TestCase):
                 ks.get_subtree_document_ids.return_value = ["doc-a", "doc-b"]
                 docs_routes.soft_delete_knowledge_node("folder-1")
 
-            rows = [r for r in parse_record.list_records() if r.get("doc_id") in ("doc-a", "doc-b")]
+            rows = [r for r in parse_record.list_records(deleted_filter=True) if r.get("doc_id") in ("doc-a", "doc-b")]
 
         self.assertEqual(sorted(r["status"] for r in rows), ["deleted", "deleted"])
         soft_mock.assert_any_call("folder-1")
