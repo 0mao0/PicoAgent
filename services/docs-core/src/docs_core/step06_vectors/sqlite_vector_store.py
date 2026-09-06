@@ -64,6 +64,9 @@ class SQLiteVectorStore(VectorStore):
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self.db_path = db_path or resolve_knowledge_index_db_path()
+        # 写入守卫用的期望维度缓存：表决查询在 20 万行库上约 2s（全表含 embedding_json 页），
+        # 不能每篇重建都跑一次。正常运维维度不变，仅 strict=False 迁移写入后失效重算。
+        self._expected_dim: Optional[int] = None
         self.init_schema()
 
     # 打开 SQLite 连接
@@ -169,9 +172,29 @@ class SQLiteVectorStore(VectorStore):
             conn.commit()
 
     # 批量写入向量记录
-    def upsert_records(self, records: List[VectorRecord]) -> int:
+    # strict_dimension=True 时拒写与库内多数维度不同的非空向量（空向量为合法无效行，放行）。
+    # 混入异构维度会让全库语义检索静默瘫痪（2026-09-06 生产故障：4.4 万行 1024 维被 291 行
+    # 2560 维毒倒）；合法的整库换维迁移请显式传 strict_dimension=False。
+    def upsert_records(self, records: List[VectorRecord], strict_dimension: bool = True) -> int:
         if not records:
             return 0
+        if strict_dimension:
+            # 只缓存正维度：空库表决为 0 时保持惰性，首笔真实写入仍会重新表决
+            if not self._expected_dim:
+                self._expected_dim = self.get_existing_dimension()
+            expected = self._expected_dim
+            if expected > 0:
+                for record in records:
+                    dim = len(record.embedding or [])
+                    if dim and dim != expected:
+                        raise ValueError(
+                            f"拒绝写入异构维度向量: 库内多数维度={expected}, "
+                            f"实际={dim} (record_id={record.record_id}, doc_id={record.doc_id})；"
+                            "整库换维迁移请传 strict_dimension=False"
+                        )
+        else:
+            # 迁移路径可合法改变库内维度分布，期望维度需重算
+            self._expected_dim = None
         rows = [
             (
                 record.record_id,
@@ -210,12 +233,19 @@ class SQLiteVectorStore(VectorStore):
         return len(rows)
 
     # 获取已有向量的维度，用于 embedding provider 维度对齐。
+    # 全库多数表决：历史版本以 rowid 最后一行的维度作为全库期望维度，
+    # 混入少量异构维度行即让全库语义检索静默瘫痪（2026-09-06 生产故障实踩）。
+    # 现取行数最多的维度，并列时偏向最近写入的；空向量行（dimension=0）不参与表决。
     def get_existing_dimension(self) -> int:
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT dimension FROM canonical_vectors ORDER BY rowid DESC LIMIT 1"
-            ).fetchone()
-        return int(row[0]) if row and row[0] else 0
+            rows = conn.execute(
+                "SELECT dimension, COUNT(*) AS cnt, MAX(rowid) AS last_rowid"
+                " FROM canonical_vectors WHERE dimension > 0 GROUP BY dimension"
+            ).fetchall()
+        if not rows:
+            return 0
+        winner = max(rows, key=lambda r: (int(r["cnt"]), int(r["last_rowid"])))
+        return int(winner["dimension"])
 
     # 清理指定文档的向量记录
     def clear_document(self, doc_id: str, entity_types: Optional[List[str]] = None) -> int:

@@ -85,3 +85,48 @@ def test_cache_invalidated_on_write(store):
 def test_dimension_mismatch_returns_empty(store):
     store.upsert_records([_record("r1", "doc-a", [1.0, 0.0])])
     assert store.search([1.0, 0.0, 0.0], top_k=5) == []
+
+
+def test_existing_dimension_empty_store(store):
+    assert store.get_existing_dimension() == 0
+
+
+def test_existing_dimension_majority_vote(store):
+    # 多数派 3 维 5 行；2 维 2 行、5 维 1 行（含最后一行 5 维）都不应左右期望维度
+    store.upsert_records([_record(f"m{i}", "doc-a", [1.0, 0.0, 0.0]) for i in range(5)])
+    store.upsert_records(
+        [_record(f"t{i}", "doc-b", [1.0, 0.0]) for i in range(2)],
+        strict_dimension=False,  # 模拟历史脏数据入库
+    )
+    store.upsert_records(
+        [_record("x1", "doc-c", [0.0, 0.0, 0.0, 0.0, 1.0])],
+        strict_dimension=False,
+    )
+    assert store.get_existing_dimension() == 3
+
+
+def test_existing_dimension_tie_prefers_latest(store):
+    store.upsert_records([
+        _record("a1", "doc-a", [1.0, 0.0]),
+        _record("b1", "doc-b", [0.0, 1.0, 0.0]),
+        _record("a2", "doc-a", [0.0, 1.0]),
+        _record("b2", "doc-b", [1.0, 1.0, 0.0]),
+    ], strict_dimension=False)
+    assert store.get_existing_dimension() == 3  # 并列时取最近写入的维度
+
+
+def test_existing_dimension_ignores_empty_vectors(store):
+    # 空向量行（dimension=0）数量再多也不得参与表决
+    store.upsert_records([_record(f"e{i}", "doc-a", []) for i in range(5)])
+    store.upsert_records([_record("r1", "doc-a", [1.0, 0.0, 0.0, 0.0])])
+    assert store.get_existing_dimension() == 4
+
+
+def test_upsert_rejects_mixed_dimension(store):
+    store.upsert_records([_record("r1", "doc-a", [1.0, 0.0, 0.0])])
+    with pytest.raises(ValueError, match="异构维度"):
+        store.upsert_records([_record("r2", "doc-a", [1.0, 0.0, 0.0, 0.0])])
+    # 空向量行不受守卫影响
+    store.upsert_records([_record("r3", "doc-a", [])])
+    # 逃生口：整库换维迁移显式关闭守卫
+    store.upsert_records([_record("r4", "doc-a", [1.0, 0.0, 0.0, 0.0])], strict_dimension=False)
