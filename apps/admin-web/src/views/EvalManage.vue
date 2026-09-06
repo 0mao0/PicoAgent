@@ -1,5 +1,5 @@
 <template>
-  <div ref="workspaceRef" class="eval-workspace" :class="appClass">
+  <div v-show="evalView === 'workbench'" ref="workspaceRef" class="eval-workspace" :class="appClass">
     <SplitPanes
       class="workspace-container"
       :initial-left-ratio="0.18"
@@ -255,11 +255,16 @@
     </a-modal>
 
   </div>
+
+  <!-- 夜间维护视图：门禁结论历史（与日常测试共享页面，头部切换） -->
+  <div v-if="evalView === 'nightly'" class="eval-nightly-wrap" :class="appClass">
+    <EvalNightlyPanel @open-run="onNightlyOpenRun" />
+  </div>
 </template>
 
 <script setup lang="ts">
 /** 评测管理页面 - 三栏布局 */
-import { ref, computed, h, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, h, inject, onMounted, onBeforeUnmount, type Ref } from 'vue'
 import { App, Input, message, Modal } from 'ant-design-vue'
 import {
   DatabaseOutlined,
@@ -286,12 +291,16 @@ import type { EvalTreeNode } from '@angineer/evals-ui'
 import type { EvalDataset, EvalQuestion } from '@angineer/evals-ui'
 import FolderModal from './components/FolderModal.vue'
 import EvalCompareModal from './components/EvalCompareModal.vue'
+import EvalNightlyPanel from './components/EvalNightlyPanel.vue'
 import { knowledgeApi } from '../api/knowledge'
 import { useLibraryStore } from '../stores/library'
 import { evalsApi } from '../api/evals'
 
 const { appClass } = useTheme()
 const { modal } = App.useApp()
+
+/** 视图模式（日常测试|夜间维护）：App.vue 头部统一控制，?view=nightly 深链进入 */
+const evalView = inject<Ref<'workbench' | 'nightly'>>('evalView', ref<'workbench' | 'nightly'>('workbench'))
 
 /** 知识库树节点（用于规范筛选） */
 interface DocTreeNode {
@@ -555,6 +564,19 @@ const onStopRun = async () => {
 /** 选择历史运行记录查看 */
 const onSelectHistoricalRun = async (runId: string) => {
   await selectHistoricalRun(runId)
+}
+
+/** 夜间维护面板点"在日常测试中打开"：切回工作台、选对测试集并加载该 run */
+const onNightlyOpenRun = async (payload: { datasetId: string; runId: string }) => {
+  evalView.value = 'workbench'
+  try {
+    if (selectedDatasetId.value !== payload.datasetId) {
+      await onDatasetSelect([payload.datasetId], [])
+    }
+    await selectHistoricalRun(payload.runId)
+  } catch (e) {
+    message.error(String((e as Error)?.message || '打开夜间 run 失败'))
+  }
 }
 
 const onDeleteRun = (runId: string) => {
@@ -853,6 +875,12 @@ onBeforeUnmount(() => {
 
 <style lang="less" scoped>
 .eval-workspace {
+  height: 100%;
+  background: var(--bg-primary);
+  transition: background-color 0.3s;
+}
+
+.eval-nightly-wrap {
   height: 100%;
   background: var(--bg-primary);
   transition: background-color 0.3s;

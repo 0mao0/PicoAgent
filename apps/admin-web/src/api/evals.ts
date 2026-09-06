@@ -72,6 +72,12 @@ export const evalsApi = {
 
   moveDataset: (datasetId: string, payload: { folder_id: string; sort_order: number }) =>
     api.patch(`/evals/datasets/${encodePathSegment(datasetId)}/move`, payload),
+
+  /** 夜间维护：历史列表（倒序，仅管理员会话可见） */
+  getNightlyList: () => api.get('/evals/nightly'),
+
+  /** 夜间维护：单日详情（结论 json + report.md 原文） */
+  getNightlyDay: (date: string) => api.get(`/evals/nightly/${encodePathSegment(date)}`),
 }
 
 export default evalsApi

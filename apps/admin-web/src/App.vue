@@ -11,7 +11,7 @@
           :module-items="navItems"
           :active-module="activeModule"
           :view-items="viewItems"
-          :active-view="knowledgeView"
+          :active-view="activeView"
           :show-theme-toggle="false"
           logo-clickable
           @logo-click="confirmGoToFrontend"
@@ -65,15 +65,29 @@ const appVersion = import.meta.env.VITE_APP_VERSION || ''
 const knowledgeView = ref<'list' | 'parse'>('list')
 provide('knowledgeView', knowledgeView)
 
-/** 当前模块为知识库时才显示视图切换（列表|解析） */
-const viewItems = computed(() =>
-  activeNav.value === 'knowledge'
-    ? [
-        { key: 'list', label: '列表' },
-        { key: 'parse', label: '解析' }
-      ]
-    : []
-)
+/** 评测集视图状态（日常测试|夜间维护）：?view=nightly 深链直达（企微卡片入口） */
+const evalView = ref<'workbench' | 'nightly'>(route.query.view === 'nightly' ? 'nightly' : 'workbench')
+provide('evalView', evalView)
+
+/** 头部视图切换按模块显示：知识库=列表|解析，评测集=日常测试|夜间维护 */
+const viewItems = computed(() => {
+  if (activeNav.value === 'knowledge') {
+    return [
+      { key: 'list', label: '列表' },
+      { key: 'parse', label: '解析' }
+    ]
+  }
+  if (activeNav.value === 'evals') {
+    return [
+      { key: 'workbench', label: '日常测试' },
+      { key: 'nightly', label: '夜间维护' }
+    ]
+  }
+  return []
+})
+
+/** 当前模块激活的视图 key（头部高亮用） */
+const activeView = computed(() => (activeNav.value === 'evals' ? evalView.value : knowledgeView.value))
 
 /** 获取前台首页地址（开发环境用独立端口，生产环境同源） */
 const webConsoleHref = import.meta.env.DEV ? WEB_CONSOLE_ORIGIN : '/'
@@ -87,11 +101,9 @@ const navItems: NavItem[] = [
   { key: 'dream-cycle', label: '健康检查' }
 ]
 
-/** 模块下拉常驻：AI 对话/用户管理/API 管理由图标进入，但下拉保持显示，方便随时切回各模块 */
+/** 下拉只承载功能性模块；管理类入口（AI 对话/用户管理/API 管理）不占用选中态，下拉显示灰色占位 */
 const activeModule = computed(() => {
-  if (activeNav.value === 'chat') return 'AI 对话'
-  if (activeNav.value === 'users') return '用户管理'
-  if (activeNav.value === 'api-keys') return 'API 管理'
+  if (['chat', 'users', 'api-keys'].includes(activeNav.value)) return ''
   return activeNav.value
 })
 
@@ -125,8 +137,14 @@ const handleNavClick = (key: string) => {
   }
 }
 
-/** 知识库视图切换 */
+/** 头部视图切换：按当前模块分发到对应视图状态 */
 const handleViewChange = (key: string) => {
+  if (activeNav.value === 'evals') {
+    if (key === 'workbench' || key === 'nightly') {
+      evalView.value = key
+    }
+    return
+  }
   if (key === 'list' || key === 'parse') {
     knowledgeView.value = key
   }
