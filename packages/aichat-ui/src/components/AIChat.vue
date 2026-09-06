@@ -19,13 +19,16 @@
     :search-citations="searchInlineCitations"
     :render-message="renderAIChatMessage"
     :allow-image-upload="false"
+    :hero="hero"
     @send="handleSend"
     @clear="clearMessages"
     @stop="stopGeneration"
     @remove-context="handleRemoveContext"
     @ready="handleReady"
     @select-citation="handleSelectCitation"
-  />
+  >
+    <template #hero><slot name="hero" /></template>
+  </BaseChat>
 </template>
 
 <script setup lang="ts">
@@ -34,7 +37,7 @@
  * 封装 BaseChat + useAIChat + 模型获取 + Markdown 渲染。
  * 通过 scene + sessionId 区分不同场景，后端自动路由。
  */
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import BaseChat from './BaseChat.vue'
 import { useAIChat } from '../composables/useAIChat'
 import { renderMarkdownToHtml } from '../utils/markdown'
@@ -61,6 +64,8 @@ interface Props {
   scene?: string
   sessionId?: string
   libraryId?: string
+  /** Hero 模式（透传 BaseChat）：无消息时展示居中大输入卡片 */
+  hero?: boolean
   /** 数据传输层注入；不传时组件退化为纯 UI（模型列表为空、无法发送） */
   transport?: AIChatTransport
 }
@@ -77,6 +82,7 @@ const props = withDefaults(defineProps<Props>(), {
   scene: 'docs',
   sessionId: 'default',
   libraryId: 'default',
+  hero: false,
   transport: undefined
 })
 
@@ -89,6 +95,7 @@ const emit = defineEmits<{
   error: [error: Error]
   answerComplete: [message: AIChatMessage]
   selectCitation: [citation: AIChatCitation]
+  messagesChange: [messages: AIChatMessage[]]
 }>()
 
 const sessionIdRef = computed(() => props.sessionId)
@@ -105,6 +112,7 @@ const {
   stopGeneration,
   clearMessages,
   startNewChat,
+  loadMessages,
 } = useAIChat({
   defaultModel: props.defaultModel,
   systemPrompt: props.systemPrompt,
@@ -114,6 +122,9 @@ const {
   getContextItems: () => props.contextItems,
   query: props.transport?.query
 })
+
+/** 消息数组任何变化（发送/收到回答/停止/报错）都向上抛出，供宿主做持久化 */
+watch(messages, (value) => { emit('messagesChange', [...value]) }, { deep: true })
 
 const loadingModels = ref(false)
 const models = ref<ModelOption[]>([])
@@ -196,6 +207,7 @@ defineExpose({
   sendMessage,
   handleSend,
   startNewChat,
+  loadSession: loadMessages,
   clearComposer: () => baseChatRef.value?.clearComposer?.()
 })
 </script>
