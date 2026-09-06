@@ -493,7 +493,7 @@ import {
 } from '@ant-design/icons-vue'
 
 // 导入 packages 中的组件和 composables
-import { SplitPanes, Panel, type DropEvent } from '@angineer/ui-kit'
+import { SplitPanes, Panel, useSplitPanesLayout, type DropEvent } from '@angineer/ui-kit'
 import { AIChat } from '@angineer/aichat-ui'
 import {
   KnowledgeTree,
@@ -603,28 +603,22 @@ const PANEL_LAYOUT_STORAGE_KEY = 'angineer-admin-knowledge-layout-v1'
 const workspaceRef = ref<HTMLElement | null>(null)
 const splitPanesRef = ref<InstanceType<typeof SplitPanes> | null>(null)
 
-const clampRatio = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
-
-const panelRatios = ref({
-  left: 0.15,
-  right: 0.25
+// 三栏比例 / 收起状态持久化：与评测集等三栏视图共用 ui-kit 的 useSplitPanesLayout（storageKey 不变，历史布局无损）
+const {
+  panelRatios,
+  leftCollapsed: leftPanelCollapsed,
+  rightCollapsed: rightPanelCollapsed,
+  setLeftCollapsed: onLeftCollapsedChange,
+  setRightCollapsed: onRightCollapsedChange,
+  onPanelResize,
+} = useSplitPanesLayout({
+  storageKey: PANEL_LAYOUT_STORAGE_KEY,
+  collapsedStorageKeys: {
+    left: 'angineer-knowledge-left-collapsed',
+    right: 'angineer-knowledge-right-collapsed',
+  },
+  getContainerWidth: () => workspaceRef.value?.clientWidth || window.innerWidth,
 })
-
-// 面板收起状态，从 localStorage 恢复
-const leftPanelCollapsed = ref(localStorage.getItem('angineer-knowledge-left-collapsed') === 'true')
-const rightPanelCollapsed = ref(localStorage.getItem('angineer-knowledge-right-collapsed') === 'true')
-
-/** 持久化左侧收起状态 */
-const onLeftCollapsedChange = (val: boolean) => {
-  leftPanelCollapsed.value = val
-  localStorage.setItem('angineer-knowledge-left-collapsed', String(val))
-}
-
-/** 持久化右侧收起状态 */
-const onRightCollapsedChange = (val: boolean) => {
-  rightPanelCollapsed.value = val
-  localStorage.setItem('angineer-knowledge-right-collapsed', String(val))
-}
 
 const graphData = ref<{ nodes: any[]; edges: any[] } | null>(null)
 const graphDataLoading = ref(false)
@@ -688,17 +682,6 @@ const smartTreeProps = {
 // 默认展开/选中（SmartTree 监听 prop 变化并应用）
 const defaultExpandedKeys = ref<string[]>([])
 const defaultSelectedKeys = ref<string[]>([])
-
-// 面板调整大小回调
-const onPanelResize = (leftSize: number, rightSize: number) => {
-  const containerWidth = workspaceRef.value?.clientWidth || window.innerWidth
-  if (containerWidth <= 0) return
-  const left = clampRatio(leftSize / containerWidth, 0.1, 0.45)
-  const right = clampRatio(rightSize / containerWidth, 0.16, 0.45)
-  if (left + right >= 0.85) return
-  panelRatios.value = { left, right }
-  localStorage.setItem(PANEL_LAYOUT_STORAGE_KEY, JSON.stringify(panelRatios.value))
-}
 
 const keepCurrentPreview = (docId: string) => docContentDocId.value === docId && Boolean(docContent.value)
 
@@ -1425,19 +1408,6 @@ const onTreeDropRoot = async (dragNodeKeys: string[]) => {
 // 组件挂载时加载数据
 onMounted(async () => {
   loadStoredParseSettings()
-  try {
-    const saved = localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY)
-    if (saved) {
-      const parsed = JSON.parse(saved) as { left?: number; right?: number }
-      const left = clampRatio(Number(parsed.left || 0.15), 0.1, 0.45)
-      const right = clampRatio(Number(parsed.right || 0.25), 0.16, 0.45)
-      if (left + right < 0.85) {
-        panelRatios.value = { left, right }
-      }
-    }
-  } catch {
-    panelRatios.value = { left: 0.15, right: 0.25 }
-  }
   void fetchLlmConfigs()
   const routeDocId = String(route.query.doc_id || '').trim()
   if (routeDocId) {

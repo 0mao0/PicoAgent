@@ -18,6 +18,7 @@
     :empty-text="emptyText"
     :default-expanded-keys="defaultExpandedKeys"
     :default-selected-keys="defaultSelectedKeys"
+    :dark="dark"
     @select="(keys, nodes) => emit('select', keys, nodes as EvalTreeNode[])"
     @rename="(node) => emit('rename', node as EvalTreeNode)"
     @add-folder="(node) => emit('add-folder', node as EvalTreeNode | null)"
@@ -57,14 +58,9 @@
 </template>
 
 <script lang="ts">
-import type { SmartTreeNode } from '@angineer/ui-kit'
-import type { EvalDatasetCategory } from '../types/eval'
-import { isCategoryFolder, isPersistedFolder } from '../composables/useEvalDatasetTree'
+import { isCategoryFolder, isPersistedFolder, type EvalTreeNode } from '../composables/useEvalDatasetTree'
 
-export interface EvalTreeNode extends SmartTreeNode {
-  questionCount?: number
-  category?: EvalDatasetCategory
-}
+export type { EvalTreeNode }
 
 export interface EvalDatasetTreeProps {
   treeData: EvalTreeNode[]
@@ -84,6 +80,7 @@ export interface EvalDatasetTreeProps {
   emptyText?: string
   defaultExpandedKeys?: string[]
   defaultSelectedKeys?: string[]
+  dark?: boolean
 }
 
 export { isCategoryFolder, isPersistedFolder }
@@ -96,8 +93,7 @@ export { isCategoryFolder, isPersistedFolder }
  */
 import { ref } from 'vue'
 import { SmartTree } from '@angineer/smartree'
-import type { SmartTreeExposed } from '@angineer/smartree'
-import type { DropEvent } from '@angineer/ui-kit'
+import type { SmartTreeExposed, DropEvent } from '@angineer/smartree'
 import { FolderOutlined, FileTextOutlined } from '@ant-design/icons-vue'
 
 defineProps<EvalDatasetTreeProps>()

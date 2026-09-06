@@ -1,9 +1,17 @@
 <template>
   <div v-show="evalView === 'workbench'" ref="workspaceRef" class="eval-workspace" :class="appClass">
     <SplitPanes
+      ref="splitPanesRef"
       class="workspace-container"
-      :initial-left-ratio="0.18"
-      :initial-right-ratio="0.22"
+      :initial-left-ratio="panelRatios.left"
+      :initial-right-ratio="panelRatios.right"
+      :left-collapsible="true"
+      :left-collapsed="leftPanelCollapsed"
+      @update:left-collapsed="onLeftCollapsedChange"
+      :right-collapsible="true"
+      :right-collapsed="rightPanelCollapsed"
+      @update:right-collapsed="onRightCollapsedChange"
+      @resize="onPanelResize"
     >
       <template #left>
         <Panel title="测试集" :icon="DatabaseOutlined" contentClass="tree-panel-content">
@@ -11,6 +19,11 @@
             <a-button type="text" size="small" title="手动创建空测试集" @click="openCreateModal">
               <template #icon><PlusOutlined /></template>
             </a-button>
+            <a-tooltip title="收起侧边栏">
+              <a-button size="small" class="header-icon-btn" @click="splitPanesRef?.toggleLeft()">
+                <template #icon><MenuFoldOutlined /></template>
+              </a-button>
+            </a-tooltip>
           </template>
           <div class="tree-container">
             <EvalDatasetTree
@@ -25,6 +38,7 @@
               :draggable="true"
               :default-expanded-keys="evalDefaultExpandedKeys"
               :default-selected-keys="selectedDatasetId ? [selectedDatasetId] : []"
+              :dark="isDark"
               empty-text="暂无测试集"
               @select="onDatasetSelect"
               @rename="onDatasetRename"
@@ -156,6 +170,11 @@
             >
               <template #icon><SwapOutlined /></template>
             </a-button>
+            <a-tooltip title="收起侧边栏">
+              <a-button size="small" class="header-icon-btn" @click="splitPanesRef?.toggleRight()">
+                <template #icon><MenuUnfoldOutlined /></template>
+              </a-button>
+            </a-tooltip>
           </template>
           <EvalRunPanel
             :dataset-id="selectedDatasetId"
@@ -212,7 +231,7 @@
 
     <FolderModal
       :visible="folderModalVisible"
-      :title="folderForm.isNew ? '新建文件夹' : '重命名文件夹'"
+      :title="folderModalTitle"
       :loading="folderModalLoading"
       :name="folderForm.name"
       :parent-id="folderForm.parentId"
@@ -264,8 +283,8 @@
 
 <script setup lang="ts">
 /** 评测管理页面 - 三栏布局 */
-import { ref, computed, h, inject, onMounted, onBeforeUnmount, type Ref } from 'vue'
-import { App, Input, message, Modal } from 'ant-design-vue'
+import { ref, computed, inject, onMounted, onBeforeUnmount, type Ref } from 'vue'
+import { App, message, Modal } from 'ant-design-vue'
 import {
   DatabaseOutlined,
   UnorderedListOutlined,
@@ -278,8 +297,10 @@ import {
   UploadOutlined,
   ExportOutlined,
   SwapOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons-vue'
-import { SplitPanes, Panel, useTheme, type DropEvent } from '@angineer/ui-kit'
+import { SplitPanes, Panel, useTheme, useSplitPanesLayout, type DropEvent } from '@angineer/ui-kit'
 import {
   EvalDatasetTree,
   EvalQuestionList,
@@ -296,8 +317,29 @@ import { knowledgeApi } from '../api/knowledge'
 import { useLibraryStore } from '../stores/library'
 import { evalsApi } from '../api/evals'
 
-const { appClass } = useTheme()
+const { appClass, isDark } = useTheme()
 const { modal } = App.useApp()
+
+/** 三栏比例 / 收起状态持久化：与知识库三栏共用 ui-kit useSplitPanesLayout（独立 storageKey，互不影响） */
+const workspaceRef = ref<HTMLElement | null>(null)
+const splitPanesRef = ref<InstanceType<typeof SplitPanes> | null>(null)
+const {
+  panelRatios,
+  leftCollapsed: leftPanelCollapsed,
+  rightCollapsed: rightPanelCollapsed,
+  setLeftCollapsed: onLeftCollapsedChange,
+  setRightCollapsed: onRightCollapsedChange,
+  onPanelResize,
+} = useSplitPanesLayout({
+  storageKey: 'angineer-admin-eval-layout-v1',
+  defaultLeftRatio: 0.18,
+  defaultRightRatio: 0.22,
+  collapsedStorageKeys: {
+    left: 'angineer-eval-left-collapsed',
+    right: 'angineer-eval-right-collapsed',
+  },
+  getContainerWidth: () => workspaceRef.value?.clientWidth || window.innerWidth,
+})
 
 /** 视图模式（日常测试|夜间维护）：App.vue 头部统一控制，?view=nightly 深链进入 */
 const evalView = inject<Ref<'workbench' | 'nightly'>>('evalView', ref<'workbench' | 'nightly'>('workbench'))
@@ -411,7 +453,12 @@ const detailQuestions = ref<EvalQuestion[]>([])
 
 const folderModalVisible = ref(false)
 const folderModalLoading = ref(false)
-const folderForm = ref({ name: '', parentId: undefined as string | undefined, isNew: true, nodeId: '', category: 'knowledge' as string })
+const folderForm = ref({ name: '', parentId: undefined as string | undefined, isNew: true, nodeId: '', category: 'knowledge' as string, nodeType: 'folder' as 'folder' | 'dataset' })
+
+/** 弹窗标题（重命名走同一 FolderModal：文件夹/测试集共用名称弹窗，不再手搓输入框 modal） */
+const folderModalTitle = computed(() =>
+  folderForm.value.isNew ? '新建文件夹' : (folderForm.value.nodeType === 'dataset' ? '重命名测试集' : '重命名文件夹')
+)
 
 /** 格式化日期 */
 const formatDate = (iso: string) => {
@@ -637,48 +684,22 @@ const handleCreateDataset = async () => {
   }
 }
 
-/** 处理重命名 */
+/** 处理重命名：文件夹与测试集统一走 FolderModal（与知识库一致） */
 const onDatasetRename = (node: EvalTreeNode) => {
   const key = String(node.key)
   if (isCategoryFolderFn(node)) {
     message.info('分类目录不支持重命名')
     return
   }
-  if (isPersistedFolderFn(node)) {
-    folderForm.value = {
-      name: node.title,
-      parentId: undefined,
-      isNew: false,
-      nodeId: key,
-      category: getCategoryFromNode(node),
-    }
-    folderModalVisible.value = true
-    return
+  folderForm.value = {
+    name: node.title,
+    parentId: undefined,
+    isNew: false,
+    nodeId: key,
+    category: getCategoryFromNode(node),
+    nodeType: isPersistedFolderFn(node) ? 'folder' : 'dataset',
   }
-  const renameValue = ref(node.title)
-  modal.confirm({
-    title: '重命名测试集',
-    content: () =>
-      h(Input, {
-        value: renameValue.value,
-        'onUpdate:value': (val: string) => { renameValue.value = val },
-        placeholder: '输入新名称',
-        style: { marginTop: '8px' },
-      }),
-    okText: '确认',
-    cancelText: '取消',
-    async onOk() {
-      const trimmed = renameValue.value?.trim()
-      if (!trimmed) throw new Error('名称不能为空')
-      if (trimmed === node.title) return
-      try {
-        await renameDataset(key, trimmed)
-        message.success('重命名成功')
-      } catch (e: any) {
-        throw new Error(e.message || '重命名失败')
-      }
-    },
-  })
+  folderModalVisible.value = true
 }
 
 /** 处理删除 */
@@ -775,6 +796,7 @@ const onAddFolder = (parentNode: EvalTreeNode | null) => {
     isNew: true,
     nodeId: '',
     category,
+    nodeType: 'folder',
   }
   folderModalVisible.value = true
 }
@@ -784,54 +806,80 @@ const onAddFile = (_node: EvalTreeNode) => {
   importModalVisible.value = true
 }
 
+/**
+ * 落位后按知识库同款机制把 SmartTree 的乐观移动持久化：
+ * 逐个兄弟节点写回父级 + sort_order（DropEvent.siblings 已含被拖节点的新位置），空隙排序不再落空。
+ * 分类目录（folder-knowledge/sop/full_chain）是后端真实 tree_node 记录，与知识库对根节点的处理一致，照常参与落库。
+ */
+const persistDroppedSiblings = async (siblings: DropEvent['siblings'], targetParentKey?: string | null) => {
+  const parentKey = targetParentKey ?? ''
+  for (let index = 0; index < siblings.length; index++) {
+    const key = String(siblings[index].key)
+    if (isPersistedFolderFn({ key } as EvalTreeNode)) {
+      await updateFolder(key, { parent_folder_id: parentKey, sort_order: index })
+    } else {
+      await moveDataset(key, parentKey, index)
+    }
+  }
+}
+
+const refreshEvalTree = async () => {
+  await Promise.all([fetchDatasets(), fetchFolders()])
+}
+
 /** 处理树节点拖放 */
 const onTreeDrop = async (event: DropEvent) => {
-  const { dragKey, targetParentKey } = event
+  const { dragKey, targetParentKey, siblings } = event
 
   if (isCategoryFolderFn({ key: dragKey } as EvalTreeNode)) return
 
   try {
-    if (isPersistedFolderFn({ key: dragKey } as EvalTreeNode)) {
-      await updateFolder(dragKey, { parent_folder_id: targetParentKey || '' })
-    } else {
-      await moveDataset(dragKey, targetParentKey || '')
-    }
+    await persistDroppedSiblings(siblings, targetParentKey)
     message.success('移动成功')
   } catch (e: any) {
     message.error(e.message || '移动失败')
-    await fetchDatasets()
-    await fetchFolders()
+  } finally {
+    await refreshEvalTree()
   }
 }
 
-/** 处理拖到根目录 */
+/** 处理拖到根目录（与知识库同款：其余根级节点按序落库，被拖节点排最后） */
 const onTreeDropRoot = async (dragNodeKeys: string[]) => {
   const dragNodeKey = dragNodeKeys[0]
   if (!dragNodeKey) return
   if (isCategoryFolderFn({ key: dragNodeKey } as EvalTreeNode)) return
   try {
+    const roots = evalTreeData.value as EvalTreeNode[]
+    const rootSiblings = roots.filter(n => String(n.key) !== dragNodeKey)
+    await persistDroppedSiblings(rootSiblings, null)
     if (isPersistedFolderFn({ key: dragNodeKey } as EvalTreeNode)) {
-      const category = getCategoryFromNode({ key: dragNodeKey } as EvalTreeNode)
-      await updateFolder(dragNodeKey, { parent_folder_id: '', category })
-      message.success('已移动到根目录')
+      const dragged = roots.find(n => String(n.key) === dragNodeKey)
+      await updateFolder(dragNodeKey, {
+        parent_folder_id: '',
+        sort_order: rootSiblings.length,
+        // 分类以节点真实值为准，不能按 key 猜测覆盖（拖普通子文件夹到根时 getCategoryFromNode({key}) 会误判成 knowledge）
+        ...(dragged?.category ? { category: dragged.category } : {}),
+      })
     } else {
-      await moveDataset(dragNodeKey, '')
-      message.success('已移动到根目录')
+      await moveDataset(dragNodeKey, '', rootSiblings.length)
     }
+    message.success('已移动到根目录')
   } catch (e: any) {
     message.error(e.message || '移动失败')
-    await fetchDatasets()
+  } finally {
+    await refreshEvalTree()
   }
 }
 
-/** 处理无效拖放 */
-const onInvalidDrop = (reason: string) => {
+/** 处理无效拖放（SmartTree 拖失败仍是乐观移动，须回读还原视图，与知识库一致） */
+const onInvalidDrop = async (reason: string) => {
   const messages: Record<string, string> = {
     'same-node': '不能拖到自身',
     'drop-to-descendant': '不能拖到子节点中',
     'drop-into-file': '不能拖入文件节点',
   }
   message.warning(messages[reason] || '无效的拖放操作')
+  await refreshEvalTree()
 }
 
 /** 处理文件夹弹窗确认 */
@@ -854,6 +902,9 @@ const handleFolderModalOk = async () => {
         parent_folder_id: parentFolderId || undefined,
       })
       message.success('创建成功')
+    } else if (folderForm.value.nodeType === 'dataset') {
+      await renameDataset(folderForm.value.nodeId, folderForm.value.name.trim())
+      message.success('重命名成功')
     } else {
       await renameFolder(folderForm.value.nodeId, folderForm.value.name.trim())
       message.success('重命名成功')
@@ -882,6 +933,17 @@ onBeforeUnmount(() => {
   height: 100%;
   background: var(--bg-primary);
   transition: background-color 0.3s;
+
+  // 三栏 Panel header：背景与内容区统一，下边线用灰色分隔（对齐知识库三栏）
+  :deep(.panel-header) {
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--panel-header-divider, var(--border-color));
+  }
+
+  // 左侧测试集树区域：暗色下用纯黑（SmartTree 本身透明，背景由容器承载）
+  :deep(.tree-panel-content) {
+    background: var(--tree-bg, var(--panel-bg));
+  }
 }
 
 .eval-nightly-wrap {
@@ -896,19 +958,34 @@ onBeforeUnmount(() => {
 
 .tree-container {
   height: 100%;
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 5px;
-  min-height: 0;
+  width: 100%;
+  min-width: 0;
+  background: transparent;
 
   :deep(.smart-tree) {
     background: transparent;
-    flex: 1;
+  }
+
+  // 删除类按钮常驻大红色（SmartTree 基础色特异性高，需 !important 覆盖）
+  :deep(.action-btn.delete) {
+    color: #ff4d4f !important;
+
+    &:hover {
+      color: #ff4d4f !important;
+      background: rgba(255, 77, 79, 0.15);
+    }
   }
 }
 
 .tree-panel-content {
   background: transparent;
+}
+
+.header-icon-btn {
+  padding-inline: 8px;
 }
 
 .question-count {
