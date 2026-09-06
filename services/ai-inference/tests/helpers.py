@@ -40,8 +40,8 @@ def api_error(message: str = "internal error", status: int = 500):
     return InternalServerError(message, response=make_response(status), body=None)
 
 
-def make_chunk(content=None, finish_reason=None, usage=None, tool_calls=None):
-    delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+def make_chunk(content=None, finish_reason=None, usage=None, tool_calls=None, reasoning=None):
+    delta = SimpleNamespace(content=content, tool_calls=tool_calls, reasoning=reasoning)
     choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
     return SimpleNamespace(choices=[choice], usage=usage)
 

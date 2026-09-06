@@ -673,7 +673,10 @@ class LLMClient:
                     yield {"type": "delta", "text": content}
                 reasoning = getattr(delta, "reasoning", None)
                 if reasoning:
-                    yield {"type": "delta", "reasoning": reasoning}
+                    # delta 事件必须恒带 text（思考增量给空串）：消费方一律按 event["text"] 取值，
+                    # 缺键会让整次生成以 KeyError('text') 失败（2026-09-06 评测 53 题全灭实踩：
+                    # Qwen3.8-Flash 直连端点思考全量输出时必现）
+                    yield {"type": "delta", "text": "", "reasoning": reasoning}
                 if getattr(choice, "finish_reason", None):
                     finish_reason = choice.finish_reason
             chunk_usage = getattr(chunk, "usage", None)
@@ -735,7 +738,10 @@ class LLMClient:
                     yield {"type": "delta", "text": content}
                 reasoning = getattr(delta, "reasoning", None)
                 if reasoning:
-                    yield {"type": "delta", "reasoning": reasoning}
+                    # delta 事件必须恒带 text（思考增量给空串）：消费方一律按 event["text"] 取值，
+                    # 缺键会让整次生成以 KeyError('text') 失败（2026-09-06 评测 53 题全灭实踩：
+                    # Qwen3.8-Flash 直连端点思考全量输出时必现）
+                    yield {"type": "delta", "text": "", "reasoning": reasoning}
                 if getattr(choice, "finish_reason", None):
                     finish_reason = choice.finish_reason
             chunk_usage = getattr(chunk, "usage", None)
@@ -872,7 +878,7 @@ class LLMClient:
             tools=tools,
         ):
             if event["type"] == "delta":
-                yield event["text"]
+                yield event.get("text", "")
             elif event["type"] == "stream_failed":
                 raise LLMStreamError(
                     f"流式输出中途失败: {event['error']['message']}",
@@ -943,7 +949,7 @@ class LLMClient:
                 ):
                     if event["type"] == "delta":
                         started = True
-                        partial_parts.append(event["text"])
+                        partial_parts.append(event.get("text", ""))
                         yield event
                         continue
 
@@ -1137,7 +1143,7 @@ class LLMClient:
             tools=tools,
         ):
             if event["type"] == "delta":
-                yield event["text"]
+                yield event.get("text", "")
             elif event["type"] == "stream_failed":
                 raise LLMStreamError(
                     f"流式输出中途失败: {event['error']['message']}",
@@ -1201,7 +1207,7 @@ class LLMClient:
                 ):
                     if event["type"] == "delta":
                         started = True
-                        partial_parts.append(event["text"])
+                        partial_parts.append(event.get("text", ""))
                         yield event
                         continue
 
