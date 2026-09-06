@@ -49,7 +49,7 @@ import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { Modal } from 'ant-design-vue'
 import { BulbFilled, BulbOutlined, TeamOutlined, WechatFilled } from '@ant-design/icons-vue'
 import { useRouter, useRoute } from 'vue-router'
-import { computed, provide, ref } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import { AppHeader, useTheme, type NavItem } from '@angineer/ui-kit'
 import { WEB_CONSOLE_ORIGIN } from '../../shared/ports'
 import AuthGate from './components/AuthGate.vue'
@@ -65,9 +65,13 @@ const appVersion = import.meta.env.VITE_APP_VERSION || ''
 const knowledgeView = ref<'list' | 'parse'>('list')
 provide('knowledgeView', knowledgeView)
 
-/** 评测集视图状态（日常测试|夜间维护）：?view=nightly 深链直达（企微卡片入口） */
-const evalView = ref<'workbench' | 'nightly'>(route.query.view === 'nightly' ? 'nightly' : 'workbench')
+/** 评测集视图状态（日常测试|夜间维护）：?view=nightly 深链直达（企微卡片入口）。
+ * mount 未等 router.isReady()，setup 时 route.query 恒为空，必须 watch 到导航解析后再同步。 */
+const evalView = ref<'workbench' | 'nightly'>('workbench')
 provide('evalView', evalView)
+watch(() => route.query.view, (v) => {
+  if (v === 'nightly') evalView.value = 'nightly'
+}, { immediate: true })
 
 /** 头部视图切换按模块显示：知识库=列表|解析，评测集=日常测试|夜间维护 */
 const viewItems = computed(() => {
