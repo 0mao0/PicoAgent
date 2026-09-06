@@ -1,7 +1,7 @@
 <template>
   <a-drawer
     :open="open"
-    placement="left"
+    placement="right"
     :width="340"
     :closable="false"
     @update:open="(value: boolean) => emit('update:open', value)"
