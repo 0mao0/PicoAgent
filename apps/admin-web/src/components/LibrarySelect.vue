@@ -7,6 +7,7 @@
       style="min-width: 160px"
       :dropdown-match-select-width="false"
       :dropdown-style="{ minWidth: '280px' }"
+      option-label-prop="label"
       @change="handleChange"
       @dropdown-visible-change="(v: boolean) => (selectOpen = v)"
     >

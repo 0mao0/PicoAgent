@@ -21,7 +21,7 @@
       <template v-if="layout === 'admin' && moduleItems.length">
         <div class="context-switcher">
           <a-dropdown :trigger="['click']">
-            <a-button type="text" class="module-switcher">
+            <a-button type="text" class="module-switcher" :class="{ 'module-switcher--placeholder': !activeModule }">
               {{ activeModuleLabel }}
               <DownOutlined class="module-chevron" />
             </a-button>
@@ -224,10 +224,10 @@ const emit = defineEmits<{
   'update:projectName': [value: string]
 }>()
 
-/** admin 布局：模块下拉 trigger 显示当前模块名 */
+/** admin 布局：模块下拉 trigger 显示当前模块名；无选中模块（管理类页面）显示灰色占位 */
 const activeModuleLabel = computed(() => {
   const item = props.moduleItems.find(i => i.key === props.activeModule)
-  return item?.label || props.activeModule || ''
+  return item?.label || props.activeModule || '待选择'
 })
 
 /** 管理端版本号直接显示（不带 v 前缀）；默认布局保留 v 前缀 */
@@ -408,6 +408,12 @@ const cancelEdit = () => {
     font-size: 10px;
     color: var(--text-secondary);
     transition: transform 0.2s ease;
+  }
+
+  // 管理类页面无对应功能模块：占位文案置灰，弱化为非选中态
+  &--placeholder {
+    color: var(--text-tertiary, var(--text-secondary));
+    font-weight: 500;
   }
 }
 
