@@ -22,7 +22,7 @@ export function useTabRouterSync() {
 
   watch(() => store.activeTab, (newKey) => {
     if (!newKey) return
-    const target = `/tab/${newKey}`
+    const target = `/workspace/tab/${newKey}`
     if (route.path !== target) {
       router.replace(target)
     }
