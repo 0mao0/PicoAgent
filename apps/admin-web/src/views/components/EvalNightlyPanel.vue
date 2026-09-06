@@ -2,6 +2,7 @@
   <!-- 夜间维护：nightly 门禁结果的历史与明细（数据源 data/evals/nightly/，仅管理员） -->
   <div class="eval-nightly-panel">
     <div class="nightly-schedule">
+      <span class="nightly-schedule__status">{{ scheduleStatusText }}</span>
       <a-space size="small" wrap>
         <span class="nightly-schedule__label">每晚定时执行（北京时间）</span>
         <a-switch v-model:checked="sched.enabled" size="small" />
@@ -17,7 +18,6 @@
           保存
         </a-button>
         <a-button size="small" :loading="sched.running" @click="runNow">立即运行</a-button>
-        <span class="nightly-schedule__status">{{ scheduleStatusText }}</span>
       </a-space>
     </div>
     <DataTable
@@ -243,9 +243,9 @@ const runNow = async () => {
   try {
     const r = await evalsApi.runNightlyNow() as { ok: boolean; detail?: string; at?: string }
     if (r.ok) {
-      message.success(`已于 ${fmtTime(r.at || '')} 触发，进度见 GitHub Actions`)
+      message.success(`已于 ${fmtTime(r.at || '')} 启动夜间流水线，预计数十分钟至数小时完成，结果见企微通知与本页历史`)
     } else {
-      message.error(`触发失败：${r.detail || '详见服务器日志'}`)
+      message.warning(r.detail || '未能启动')
     }
     await loadSchedule()
   } catch (e) {
@@ -266,18 +266,26 @@ onMounted(() => {
   height: 100%;
   min-height: 0;
   overflow: auto;
-  padding: 12px 16px;
+  padding: 16px 24px;
   box-sizing: border-box;
 }
+/* 工具条式布局（对齐知识库列表页的留白）：状态信息居左、操作靠右，与表格拉开呼吸间距 */
 .nightly-schedule {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  min-height: 32px;
+  margin-bottom: 20px;
 }
 .nightly-schedule__label,
 .nightly-schedule__status {
   font-size: 12px;
   color: var(--text-secondary, rgba(0, 0, 0, 0.45));
+}
+.nightly-schedule__status {
+  margin-right: auto;
 }
 .nightly-help {
   margin-left: 4px;
