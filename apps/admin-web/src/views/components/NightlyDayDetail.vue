@@ -71,7 +71,7 @@
       </a-collapse-panel>
 
       <a-collapse-panel v-if="detail?.report_md" key="report" header="评测报告（report.md）">
-        <pre class="ndd-report__raw">{{ detail?.report_md }}</pre>
+        <div class="ndd-md" v-html="reportHtml" />
       </a-collapse-panel>
     </a-collapse>
   </div>
@@ -81,6 +81,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Empty } from 'ant-design-vue'
 import * as echarts from 'echarts'
+import { renderMarkdownToHtml } from '@angineer/aichat-ui/utils/markdown'
 
 interface QuestionItem {
   qid: string
@@ -177,6 +178,9 @@ const regressions = computed<QuestionItem[]>(() => {
   return Object.entries(day.regressions || {}).map(([qid, bucket]) => ({ qid, bucket_detail: bucket }))
 })
 const fixed = computed<QuestionItem[]>(() => cur.value.fixed_items || [])
+/** report.md 走 aichat-ui 同款渲染器（表格/标题/列表；admin-web 本就经 AIChat/evals-ui 打入了该 chunk） */
+const reportHtml = computed(() => renderMarkdownToHtml(props.detail?.report_md || '', ''))
+
 const fixedHeader = computed(() => {
   const total = matrixPf.value ?? fixed.value.length
   return fixed.value.length < total
@@ -293,13 +297,52 @@ onBeforeUnmount(() => {
 .ndd-collapses {
   background: transparent;
 }
-.ndd-report__raw {
-  white-space: pre-wrap;
-  word-break: break-all;
+/* 渲染后的 report.md：表格/标题/列表样式（v-html 内容需 :deep） */
+.ndd-md {
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--text-primary, rgba(0, 0, 0, 0.85));
+  max-height: 480px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.ndd-md :deep(h1) { font-size: 17px; margin: 12px 0 8px; }
+.ndd-md :deep(h2) { font-size: 15px; margin: 12px 0 6px; }
+.ndd-md :deep(h3) { font-size: 14px; margin: 10px 0 6px; }
+.ndd-md :deep(p) { margin: 4px 0; }
+.ndd-md :deep(ul), .ndd-md :deep(ol) { margin: 4px 0; padding-left: 22px; }
+.ndd-md :deep(li) { margin: 2px 0; }
+.ndd-md :deep(strong) { font-weight: 600; }
+.ndd-md :deep(code) {
+  background: rgba(128, 128, 128, 0.12);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+.ndd-md :deep(pre code) { background: transparent; padding: 0; }
+.ndd-md :deep(pre) {
+  background: rgba(128, 128, 128, 0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow: auto;
+}
+.ndd-md :deep(table) {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+.ndd-md :deep(th), .ndd-md :deep(td) {
+  border: 1px solid var(--border-color, rgba(5, 5, 5, 0.08));
+  padding: 4px 10px;
   font-size: 12px;
   line-height: 18px;
-  max-height: 360px;
-  overflow: auto;
+  white-space: nowrap;
+}
+.ndd-md :deep(th) {
+  background: var(--bg-secondary, rgba(128, 128, 128, 0.06));
+  font-weight: 600;
+}
+.ndd-md :deep(tr:nth-child(even) td) {
+  background: var(--bg-secondary, rgba(128, 128, 128, 0.03));
 }
 .ndd-qlist {
   list-style: none;
