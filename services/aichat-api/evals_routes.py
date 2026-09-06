@@ -1,10 +1,13 @@
 """Evals API 路由。"""
 import asyncio
 import json
+import os
+import re as _re
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile
 
+from chat_auth import resolve_session_principal
 from evals_core.contracts import (
     AddQuestionRequest,
     CompareResult,
@@ -324,3 +327,68 @@ async def analyze_compare(body: Dict[str, Any] = None):
         return {"question_id": question_id, "analysis": analysis}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM 分析失败: {exc}")
+
+
+# --- 夜间维护（nightly 门禁产物只读视图）---
+# 仅这两个路由要求管理员会话（require_admin_session）；存量 /api/evals/* 鉴权治理另行处理。
+
+_NIGHTLY_DATE_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _nightly_root() -> str:
+    """产物目录与 evals.sqlite 同口径（result_store 的 data/evals 根），不新增配置项。"""
+    return os.path.join(os.path.dirname(result_store._DB_PATH), "nightly")
+
+
+async def require_admin_session(request: Request) -> None:
+    """新接口独立鉴权：Bearer session（复用 chat_auth 解析）且 is_admin。"""
+    if not resolve_session_principal(request):
+        raise HTTPException(status_code=401, detail="需要登录会话")
+    if not getattr(request.state.session_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="仅管理员可查看")
+
+
+def _read_nightly_day(day_dir: str, date: str) -> Dict[str, Any]:
+    """读单日 nightly.json；缺失/损坏降级为 corrupt，不炸整个列表。"""
+    try:
+        with open(os.path.join(day_dir, "nightly.json"), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError("nightly.json 不是对象")
+        data["date"] = date
+        return data
+    except (OSError, ValueError):
+        return {"date": date, "state": "corrupt"}
+
+
+@evals_router.get("/nightly", dependencies=[Depends(require_admin_session)])
+async def list_nightly_days():
+    """夜间维护历史列表（倒序）。workflow Publish 步骤逐日落 data/evals/nightly/<date>/。"""
+    root = _nightly_root()
+    if not os.path.isdir(root):
+        return {"days": []}
+    days = [
+        _read_nightly_day(os.path.join(root, name), name)
+        for name in sorted(os.listdir(root), reverse=True)
+        if _NIGHTLY_DATE_RE.match(name) and os.path.isdir(os.path.join(root, name))
+    ]
+    return {"days": days}
+
+
+@evals_router.get("/nightly/{date}", dependencies=[Depends(require_admin_session)])
+async def get_nightly_day(date: str):
+    """单日详情：结论 json + report.md 原文。date 严格校验防路径穿越。"""
+    if not _NIGHTLY_DATE_RE.match(date):
+        raise HTTPException(status_code=404, detail="日期格式不合法")
+    day_dir = os.path.join(_nightly_root(), date)
+    if not os.path.isdir(day_dir):
+        raise HTTPException(status_code=404, detail="该日期无夜间维护记录")
+    entry = _read_nightly_day(day_dir, date)
+    report_md = ""
+    report_path = os.path.join(day_dir, "report.md")
+    try:
+        with open(report_path, "r", encoding="utf-8") as fh:
+            report_md = fh.read()
+    except OSError:
+        pass
+    return {"nightly": entry, "report_md": report_md}
