@@ -70,7 +70,10 @@ def load_baseline(baseline_dir: Optional[Path] = None) -> dict:
     from . import paths
     base_dir = Path(baseline_dir) if baseline_dir else paths.baseline_dir()
     pointer = json.loads((base_dir / "baseline_run.json").read_text(encoding="utf-8"))
-    raw_name = Path(str(pointer.get("raw", ""))).name
+    # raw 可能是 Windows 机器钉的（"data\evals\baseline\..."）：POSIX Path 不切反斜杠，
+    # 直接 .name 会把整串当文件名拼出双重路径（2026-09-07 nightly 实踩 FileNotFoundError），先归一化分隔符
+    raw = str(pointer.get("raw", "")).replace("\\", "/")
+    raw_name = Path(raw).name
     snapshot = json.loads((base_dir / raw_name).read_text(encoding="utf-8"))
     snapshot["_baseline_label"] = pointer.get("label", "baseline")
     return normalize_run(snapshot)

@@ -136,10 +136,12 @@ def cmd_pin(args) -> int:
     snapshot = {"run_id": run.get("run_id"), "dataset_id": run.get("dataset_id"),
                 "status": run.get("status"), "details": pruned_details}
     common.save_json(BASELINE_DIR / raw_name, snapshot)
+    # raw 存仓库根相对路径且统一正斜杠（as_posix）：Windows 钉的基线会被拷到 Linux 服务器消费，
+    # 原生分隔符会让服务端 Path().name 切不出文件名（2026-09-07 nightly 实踩）
     common.save_json(BASELINE_POINTER, {
         "label": args.label or run.get("run_id"), "run_id": run.get("run_id"),
         "dataset_id": run.get("dataset_id"),
-        "raw": str((BASELINE_DIR / raw_name).relative_to(common.REPO_ROOT)),
+        "raw": (BASELINE_DIR / raw_name).relative_to(common.REPO_ROOT).as_posix(),
     })
     print("基线已钉住:", BASELINE_POINTER)
     return 0
