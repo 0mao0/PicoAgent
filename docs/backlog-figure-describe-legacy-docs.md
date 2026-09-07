@@ -1,7 +1,8 @@
 # 待办：存量文档图描述补齐 与 83 篇产物重建
 
-> 状态：**阶段 1（存量图描述补齐）已于 2026-09-07 凌晨全部完成**；阶段 2（产物重建）因源文件找到而变为可行，
-> 剩余仅溯源 PDF 视图降级与本地完整重建，挂账待用户排期。
+> 状态：**阶段 1（存量图描述补齐）已于 2026-09-07 全部完成**（本地 26 + 生产 77 + 4 篇无图块无需做）。
+> 溯源 PDF 视图：生产从未缺失（source/ 原 PDF 齐在快照里）；本地经整目录倒灌 + 零 VLM 重索引补齐（进行中），
+> 全程零 mineru 重解析。源文件离线备份在 `D:\AI\07智能建造\施工组织方案`，本地如需完整重建随时可行。
 
 ## 起因
 
@@ -20,8 +21,9 @@ VLM 图描述功能上线前的存量文档没有图简介索引；部分文档�
 
 - 两端重叠的 26 篇走**产物同步**：本地跑完 VLM 后把 `doc_blocks_graph.jsonl` scp 到生产，生产重触发时
   图描述阶段断点跳过（零 VLM 调用），只重建索引。
-- 生产新生成的 77 份 jsonl 已于收尾时倒灌回本地（`libraries/lib-261558be/...`，77/77 抽检图块带描述）；
-  本地零 VLM 重索引（fts/vectors/graph）于 2026-09-07 晨执行（若完成，本地与生产重新同构）。
+- 生产新生成的 77 份 jsonl 已倒灌回本地；**生产 77 篇的 `source/` 原 PDF 全数在服务器**（77/77，快照
+  含源文件）——"溯源 PDF 视图降级"仅存在于本地；本地已启动**整目录倒灌**（source+parsed 全量，约 3.4GB）
+  加 66 篇零 VLM 重索引（fts/vectors/graph），完成后本地与生产完全同构、溯源视图可用，全程零 mineru 解析。
 - 工具：`scripts/open_ragbench/backfill_figure_descriptions.py`（本次升级：`--from-db` 自动筛队列/`--dry-run`/
   管理员 Bearer 轮询/`--token`/连接异常重试/兼容旧 python，commit `ea186da`）。
 - 收尾日志归档：服务器 `data/recovery/fig_backfill_20260907/`（run77/runfix/chain 日志与清单）。
@@ -42,9 +44,17 @@ VLM 图描述功能上线前的存量文档没有图简介索引；部分文档�
   每篇写库 → mtime 变 → 全表向量 JSON 重载（约 8 百 MB 级矩阵）→ 与解析峰值叠加 → 4GB swap 打穿、
   load>100、站点/sshd 假死，内核 OOM 杀 uvicorn（dmesg：anon-rss 2.87GB / 3.1GB 各一次）自愈后循环。
   方向：缓存上限/float16/挪出 web worker；解析任务与检索流量错峰。本次靠重启 + 错峰收尾，未根治。
-- ~~`SQLiteVectorStore.get_existing_dimension()` 以 rowid 最后一行为全库期望维度~~（已修：commit `83797be`
-  多数表决 + upsert 默认拒写异构维度 + 6 测试）。
+- ~~`SQLiteVectorStore.get_existing_dimension()` 以 rowid 最后一行为全库期望维度~~（已修，两段式）：
+  commit `83797be` 改为全表多数表决 + upsert 默认拒写异构维度——但表决被 embedding_provider 在模块
+  import 期调用，5.3GB/21 万行库单次表决 294s，容器启动被拖 15+ 分钟（2026-09-07 两次部署实踩 502）；
+  commit `4dedae7` 根治：index_meta 表持久化期望维度，稳态 O(1) 免扫描，meta 缺失才跑一次表决落库，
+  `strict_dimension=False` 迁移路径清 meta 重算；生产存量库已离线种 meta（1024 维）。同批 6+5 测试全绿。
+- **B. docs-api import 期/启动热路径不得跑无界全表查询**（4dedae7 根因教训）：embedding_provider 模块级
+  初始化即触发维度探测，历史如此、直到表决引入才暴露量级。同类 import 期 DB 调用建议后续排查
+  （aichat-api 的预热是显式后台任务，无此问题）。
 - 拒答重答守卫对"结构上根本答不了"的问题（如引用不存在的"图 N"索引）多烧一轮检索（+20 秒级），未动。
+- 服务器 `knowledge_index.sqlite.bak-recovery-*`、`.pre-merge-*` 等备份共约 12GB（单文件 2.4GB 级），
+  2026-09-13 快照清理期后择机删除（当前留作事故回溯，勿提前清）。
 
 ## 事故档案索引
 
