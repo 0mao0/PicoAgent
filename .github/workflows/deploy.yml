@@ -60,7 +60,9 @@ jobs:
           cd /home/runner/AnGIneer/docker
           bash deploy.sh --prepare
           docker compose down
-          docker compose up -d
+          # 只拉起业务三件套；documentserver(onlyoffice) 已停用（无任何代码引用，
+          # 3.6GB 机器上 pluginsmanager 持续 100% CPU），不再随部署自动复活
+          docker compose up -d frontend docs-api aichat-api
 
       - name: Cleanup old images
         run: |
