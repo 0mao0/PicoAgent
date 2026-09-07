@@ -94,6 +94,18 @@ class FireTimeTests(unittest.TestCase):
         self.assertFalse(nc.due(dict(cfg, last_dispatch={"slot": nc.slot_of(cfg, after)}), after))
         self.assertFalse(nc.due(dict(cfg, enabled=False), after))
 
+    def test_due_manual_dispatch_satisfies_today_slot(self):
+        """manual 派发（slot 带 "manual:" 前缀）满足当日幂等：当天不再被调度器补跑；
+        次日时段到、无更新派发时仍能正常触发（2026-09-07 幽灵评测事故回归）。"""
+        cfg = {"enabled": True, "hour": 1, "minute": 0}
+        manual = {"slot": "manual:2026-09-07T16:41+08:00", "at": "2026-09-07T16:41:14+08:00", "ok": True}
+        same_day = datetime(2026, 9, 7, 10, 0, tzinfo=timezone.utc)  # 北京 18:00，manual 之后
+        self.assertFalse(nc.due(dict(cfg, last_dispatch=manual), same_day))
+        next_day = datetime(2026, 9, 8, 1, 5, tzinfo=timezone.utc)   # 北京 09:05，新一天时段已过
+        self.assertTrue(nc.due(dict(cfg, last_dispatch=manual), next_day))
+        # at 缺失/不可解析时保持旧行为：时段后即视为该跑，宁可多跑不漏跑
+        self.assertTrue(nc.due(dict(cfg, last_dispatch={"slot": "manual:x"}), same_day))
+
 
 class RunPlanTests(unittest.TestCase):
     def test_plan_shape_models_and_concurrency(self):

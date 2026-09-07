@@ -110,14 +110,28 @@ def slot_of(cfg: dict, now: datetime) -> str:
 
 
 def due(cfg: dict, now: datetime) -> bool:
-    """启用、已到今日时段、且该时段未触发过 → 该跑。"""
+    """启用、且已到今日时段 → 该跑；当日时段后已有任何派发（调度器或「立即运行」）
+    即视为当天已跑完，不再补跑。2026-09-07 实踩：manual 派发的 slot 键带 "manual:" 前缀，
+    旧判定只比对 slot 字符串完全相等，容器重启后调度器误判当日未跑，自动重跑了一轮幽灵评测。"""
     if not cfg.get("enabled"):
         return False
     local = now.astimezone(BJT)
-    if local.hour * 60 + local.minute < cfg["hour"] * 60 + cfg["minute"]:
+    slot_dt = local.replace(hour=cfg["hour"], minute=cfg["minute"], second=0, microsecond=0)
+    if local < slot_dt:
         return False
     last = cfg.get("last_dispatch") or {}
-    return last.get("slot") != slot_of(cfg, now)
+    if last.get("slot") == slot_of(cfg, now):
+        return False
+    at = last.get("at")
+    if not at:
+        return True
+    try:
+        at_dt = datetime.fromisoformat(str(at))
+    except ValueError:
+        return True
+    if at_dt.tzinfo is None:
+        at_dt = at_dt.replace(tzinfo=BJT)
+    return at_dt < slot_dt
 
 
 def run_plan() -> dict:
