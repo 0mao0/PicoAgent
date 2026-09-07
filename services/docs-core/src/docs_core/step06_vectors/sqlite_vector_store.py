@@ -64,8 +64,9 @@ class SQLiteVectorStore(VectorStore):
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self.db_path = db_path or resolve_knowledge_index_db_path()
-        # 写入守卫用的期望维度缓存：表决查询在 20 万行库上约 2s（全表含 embedding_json 页），
-        # 不能每篇重建都跑一次。正常运维维度不变，仅 strict=False 迁移写入后失效重算。
+        # 写入守卫用的期望维度缓存：期望维度以 index_meta 持久化为准（O(1) 读），
+        # 表决只作为 meta 缺失（旧库首开/迁移后）的一次性回填——全表表决在
+        # 5GB 级库上可拖死容器启动数十分钟（2026-09-07 生产事故实踩）。
         self._expected_dim: Optional[int] = None
         self.init_schema()
 
@@ -169,6 +170,10 @@ class SQLiteVectorStore(VectorStore):
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_canonical_vectors_doc_entity ON canonical_vectors(doc_id, entity_id)"
             )
+            # 期望维度持久化 meta：稳态维度读取 O(1)，避免每次启动/首写做全表表决
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT)"
+            )
             conn.commit()
 
     # 批量写入向量记录
@@ -193,8 +198,14 @@ class SQLiteVectorStore(VectorStore):
                             "整库换维迁移请传 strict_dimension=False"
                         )
         else:
-            # 迁移路径可合法改变库内维度分布，期望维度需重算
+            # 迁移路径可合法改变库内维度分布：期望维度缓存与持久化 meta 均需失效，
+            # 下次 strict 写入按新库重算（meta 删除后走一次表决回填）
             self._expected_dim = None
+            with self.connect() as conn:
+                conn.execute(
+                    "DELETE FROM index_meta WHERE key = ?", (self._META_DIM_KEY,)
+                )
+                conn.commit()
         rows = [
             (
                 record.record_id,
@@ -233,10 +244,21 @@ class SQLiteVectorStore(VectorStore):
         return len(rows)
 
     # 获取已有向量的维度，用于 embedding provider 维度对齐。
-    # 全库多数表决：历史版本以 rowid 最后一行的维度作为全库期望维度，
-    # 混入少量异构维度行即让全库语义检索静默瘫痪（2026-09-06 生产故障实踩）。
-    # 现取行数最多的维度，并列时偏向最近写入的；空向量行（dimension=0）不参与表决。
+    # meta 优先（O(1)，稳态零扫描）；meta 缺失（旧库首开/整库迁移后）才做
+    # 全库多数表决并把结果落 meta——历史版本以 rowid 最后一行的维度作为全库
+    # 期望维度，混入少量异构维度行即让全库语义检索静默瘫痪（2026-09-06 生产故障实踩），
+    # 故表决取行数最多的维度、并列时偏向最近写入；空向量行（dimension=0）不参与。
+    # 注意：表决是全表扫描，5GB 级库冷缓存可耗时数十分钟——不要在 import/启动
+    # 热路径上无 meta 触发（2026-09-07 生产事故：容器启动被拖死 15+ 分钟）。
+    _META_DIM_KEY = "expected_dimension"
+
     def get_existing_dimension(self) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM index_meta WHERE key = ?", (self._META_DIM_KEY,)
+            ).fetchone()
+        if row is not None:
+            return int(row["value"])
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT dimension, COUNT(*) AS cnt, MAX(rowid) AS last_rowid"
@@ -245,7 +267,14 @@ class SQLiteVectorStore(VectorStore):
         if not rows:
             return 0
         winner = max(rows, key=lambda r: (int(r["cnt"]), int(r["last_rowid"])))
-        return int(winner["dimension"])
+        dim = int(winner["dimension"])
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                (self._META_DIM_KEY, str(dim)),
+            )
+            conn.commit()
+        return dim
 
     # 清理指定文档的向量记录
     def clear_document(self, doc_id: str, entity_types: Optional[List[str]] = None) -> int:
