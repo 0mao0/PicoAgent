@@ -11,7 +11,7 @@ suite_runner——nightly 不是外部系统，就是产品自己给自己排的
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from evals_core.runner import anomaly, suite_runner
 from evals_core.storage import result_store
@@ -128,13 +128,17 @@ def _load_json(path):
 
 
 async def _notify_best_effort(webhook: str, text: str) -> None:
-    if not webhook:
+    """逐群尽力推送：支持逗号/分号/空白分隔的多群；单群失败只告警，不阻断其余、不翻转结论。"""
+    targets = notify.split_webhooks(webhook)
+    if not targets:
         logger.info("未配置企微 webhook，跳过通知")
         return
-    try:
-        await asyncio.to_thread(notify.send, webhook, text)
-    except Exception as exc:  # noqa: BLE001 通知失败不翻转评测结论
-        logger.warning("企微通知失败（不影响结论）: %s", exc)
+    for url in targets:
+        try:
+            await asyncio.to_thread(notify.send, url, text)
+            logger.info("企微通知已送达: %s", notify.target_label(url))
+        except Exception as exc:  # noqa: BLE001 通知失败不翻转评测结论
+            logger.warning("企微通知失败（不影响结论）target=%s: %s", notify.target_label(url), exc)
 
 
 async def run_nightly(*, dataset_id: str,
@@ -142,8 +146,13 @@ async def run_nightly(*, dataset_id: str,
                       retry_rounds: int = DEFAULT_RETRY_ROUNDS,
                       resamples: int = 1000,
                       site_url: str = "",
-                      webhook: str = "") -> dict:
-    """执行整条流水线并保证"当天必有结论"。返回 {state, ok, run_id, detail, ...}。"""
+                      webhook: str = "",
+                      on_run_started: Optional[Callable[[str], None]] = None,
+                      should_stop: Optional[Callable[[], bool]] = None) -> dict:
+    """执行整条流水线并保证"当天必有结论"。返回 {state, ok, run_id, detail, ...}。
+
+    on_run_started：run 一开跑即上报 run_id（供上层暴露进度/停止目标），回调异常不拖垮流水线。
+    should_stop：人为停止意图轮询——起跑间隙置位则起跑后立即收尾；正常完成不因它丢结论。"""
     date = paths.today_bjt()
     deadline = time.monotonic() + timeout_hours * 3600
     run_id = ""
@@ -153,11 +162,28 @@ async def run_nightly(*, dataset_id: str,
         run_id = str(started.get("run_id") or "")
         if not run_id:
             raise PipelineError("start_eval_run 未返回 run_id")
+        if on_run_started:
+            try:
+                on_run_started(run_id)
+            except Exception:  # noqa: BLE001 进度上报失败不影响评测本身
+                logger.exception("nightly on_run_started 回调异常（run=%s）", run_id)
         logger.info("nightly 流水线启动：dataset=%s run=%s", dataset_id, run_id)
+        # 起跑间隙停止：run_id 上报前 stop_pipeline 无从下手，这里拿到 id 立即补停闭环
+        if should_stop and should_stop():
+            await asyncio.to_thread(suite_runner.stop_eval_run, run_id)
         await _await_terminal(run_id, deadline)
         await _auto_retry(run_id, dataset_id, retry_rounds, deadline)
         return await _compute_and_publish(run_id, dataset_id, resamples, site_url, webhook)
-    except Exception as exc:  # noqa: BLE001 任何异常都收口为 error 档结论，绝不让历史断档
+    except Exception as exc:  # noqa: BLE001 任何异常都收口，绝不让历史断档
+        # 人为停止：should_stop 置位且 run 未正常完成 → "stopped" 档（不落 error 结论、不发企微，
+        # 与「删除同步停止」语义一致：干净消失，不污染门禁历史）
+        if should_stop and should_stop():
+            status = await asyncio.to_thread(
+                lambda: (result_store.get_run(run_id) or {}).get("status") if run_id else "")
+            if status != "completed":
+                logger.info("nightly 流水线被手动停止（run=%s）", run_id)
+                return {"state": "stopped", "ok": False, "run_id": run_id,
+                        "detail": "已被手动停止，未生成结论"}
         logger.exception("nightly 流水线失败（run=%s）", run_id)
         note = f"{type(exc).__name__}: {str(exc)[:280]}"
         try:

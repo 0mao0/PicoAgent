@@ -10,10 +10,12 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from evals_core.nightly import paths, pipeline
+from evals_core.runner import suite_runner
+from evals_core.storage import result_store
 
 logger = logging.getLogger("nightly_control")
 
@@ -147,10 +149,67 @@ def run_plan() -> dict:
 # ── 流水线触发（进程内唯一，天然替代 GH 的 concurrency 锁）──
 
 _active: Optional[asyncio.Task] = None
+# 运行中流水线的 run 视图：_current_run_id 供列表虚拟行/停止目标；_stop_requested 是
+# 人为停止意图（pipeline 收到后走 stopped 收口：不落 error 结论、不发企微）
+_current_run_id: str = ""
+_stop_requested: bool = False
 
 
 def is_running() -> bool:
     return _active is not None and not _active.done()
+
+
+def _on_run_started(run_id: str) -> None:
+    global _current_run_id
+    _current_run_id = run_id
+
+
+def running_entry() -> Optional[dict]:
+    """列表虚拟运行行：进度取 evals.sqlite 的实时 run；起跑前/已终态返回 None。
+
+    evals 库 started_at 为 UTC naive（容器 UTC），展示统一转北京 +08 带偏移，
+    与归档条目 generated_at 同口径，前端 fmtTime 直接解析。"""
+    if not is_running() or not _current_run_id:
+        return None
+    run = result_store.get_run(_current_run_id) or {}
+    if run.get("status") not in ("running", "pending", "queued"):
+        return None
+    cfg = load_settings()
+    subject = pipeline._dataset_subject(cfg["dataset_id"])
+    started = str(run.get("started_at") or "")
+    generated = ""
+    if started:
+        try:
+            dt = datetime.fromisoformat(started)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            generated = dt.astimezone(BJT).isoformat(timespec="seconds")
+        except ValueError:
+            generated = started
+    return {
+        "date": "running", "running": True, "state": "running",
+        "generated_at": generated, "run_id": _current_run_id,
+        "dataset_id": cfg["dataset_id"], "subject": subject,
+        "correct": run.get("completed_questions"), "total": run.get("total_questions"),
+        "verdict": "评测进行中，完成后出结论",
+    }
+
+
+def stop_pipeline() -> dict:
+    """请求停止当前流水线（管理员操作）。优雅停止：当前题做完收尾标 cancelled，
+    流水线轮询最迟 ~10s 后经 stopped 路径收口；当天该 slot 已记录，不会自动重跑。"""
+    global _stop_requested
+    if not is_running():
+        return {"ok": False, "detail": "当前没有流水线在运行"}
+    _stop_requested = True
+    run_id = _current_run_id
+    if run_id:
+        try:
+            suite_runner.stop_eval_run(run_id)
+        except Exception:  # noqa: BLE001 停止评测失败也要收口（should_stop 兜底判定）
+            logger.exception("stop_eval_run 异常（run=%s），流水线仍按停止收口", run_id)
+    return {"ok": True, "run_id": run_id,
+            "detail": "已请求停止：当前题目完成后退出，不落结论、不发通知"}
 
 
 def _record(cfg: dict, now: datetime, source: str, slot: Optional[str], result: dict) -> None:
@@ -171,17 +230,25 @@ def _record(cfg: dict, now: datetime, source: str, slot: Optional[str], result: 
 
 
 async def _execute(cfg: dict, source: str, slot: Optional[str]) -> dict:
+    global _stop_requested, _current_run_id
+    _stop_requested = False
+    _current_run_id = ""
     t0 = time.monotonic()
     webhook = (os.getenv("NIGHTLY_WECOM_WEBHOOK") or os.getenv("WEBHOOK") or "").strip()
     site_url = (os.getenv("NIGHTLY_SITE_URL") or "https://angineer.cn/admin/evals?view=nightly").strip()
     logger.info("nightly 流水线开始（source=%s, dataset=%s）", source, cfg["dataset_id"])
-    result = await pipeline.run_nightly(
-        dataset_id=cfg["dataset_id"],
-        timeout_hours=cfg["timeout_minutes"] / 60.0,
-        retry_rounds=cfg["retry_rounds"],
-        site_url=site_url,
-        webhook=webhook,
-    )
+    try:
+        result = await pipeline.run_nightly(
+            dataset_id=cfg["dataset_id"],
+            timeout_hours=cfg["timeout_minutes"] / 60.0,
+            retry_rounds=cfg["retry_rounds"],
+            site_url=site_url,
+            webhook=webhook,
+            on_run_started=_on_run_started,
+            should_stop=lambda: _stop_requested,
+        )
+    finally:
+        _current_run_id = ""
     logger.info("nightly 流水线结束（source=%s）: state=%s 用时 %.1f min",
                 source, result.get("state"), (time.monotonic() - t0) / 60.0)
     _record(cfg, datetime.now(BJT), source, slot, result)
@@ -190,9 +257,10 @@ async def _execute(cfg: dict, source: str, slot: Optional[str]) -> dict:
 
 async def launch(source: str = "manual", slot: Optional[str] = None) -> dict:
     """后台启动流水线；已在跑则拒绝（返回 ok=False）。返回启动状态（非评测结果）。"""
-    global _active
+    global _active, _stop_requested
     if is_running():
         return {"ok": False, "detail": "已有一条夜间流水线在运行，请等待其完成"}
+    _stop_requested = False
     cfg = load_settings()
     _active = asyncio.create_task(_execute(cfg, source, slot))
     return {"ok": True, "started_at": datetime.now(BJT).isoformat(timespec="seconds"),

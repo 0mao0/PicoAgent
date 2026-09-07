@@ -91,6 +91,12 @@ export const evalsApi = {
 
   /** 夜间维护：立即运行前的执行计划预览（测试集/模型/并发，仅配置名） */
   getNightlyRunPlan: () => api.get('/evals/nightly/run-plan'),
+
+  /** 夜间维护：停止运行中的流水线（当前题完成后收尾，不落结论、不发通知） */
+  stopNightly: () => api.post('/evals/nightly/stop'),
+
+  /** 夜间维护：删除一条结论（连带删除对应评测 run；run 在跑则先停） */
+  deleteNightlyDay: (date: string) => api.delete(`/evals/nightly/${encodePathSegment(date)}`),
 }
 
 export default evalsApi

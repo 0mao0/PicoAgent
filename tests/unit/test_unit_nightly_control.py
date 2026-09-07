@@ -164,5 +164,89 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("运行", second["detail"])
 
 
+class StopAndRunningRowTests(unittest.TestCase):
+    """手动停止（不留痕不发通知）与列表虚拟运行行的编排/字段口径。"""
+
+    def tearDown(self):
+        nc._stop_requested = False
+        nc._current_run_id = ""
+        nc._active = None
+
+    def test_stop_rejected_when_not_running(self):
+        nc._active = None
+        r = nc.stop_pipeline()
+        self.assertFalse(r["ok"])
+        self.assertFalse(nc._stop_requested)
+
+    def test_stop_sets_flag_and_stops_current_run(self):
+        stop_mock = mock.MagicMock(return_value=True)
+
+        async def scenario():
+            holder = asyncio.create_task(asyncio.sleep(30))
+            nc._active = holder
+            nc._current_run_id = "run-abc"
+            with mock.patch.object(nc.suite_runner, "stop_eval_run", stop_mock):
+                r = nc.stop_pipeline()
+            holder.cancel()
+            return r
+
+        r = asyncio.run(scenario())
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["run_id"], "run-abc")
+        self.assertTrue(nc._stop_requested)  # 收口靠它：不落 error 档、不发通知
+        stop_mock.assert_called_once_with("run-abc")
+
+    def test_stopped_pipeline_publishes_nothing(self):
+        """should_stop 置位 → run 被取消也走 stopped 收口：不落盘、不发企微。"""
+        from evals_core.nightly import pipeline
+
+        seen = []
+
+        async def scenario():
+            with mock.patch.object(pipeline.suite_runner, "start_eval_run",
+                                   return_value={"run_id": "run-9"}), \
+                 mock.patch.object(pipeline.suite_runner, "stop_eval_run") as stop_mock, \
+                 mock.patch.object(pipeline.result_store, "get_run",
+                                   return_value={"status": "cancelled"}), \
+                 mock.patch.object(pipeline.archive, "publish_day") as pub, \
+                 mock.patch.object(pipeline.notify, "send") as send:
+                res = await pipeline.run_nightly(
+                    dataset_id="ds-a", retry_rounds=0,
+                    on_run_started=seen.append, should_stop=lambda: True)
+            return res, stop_mock, pub, send
+
+        res, stop_mock, pub, send = asyncio.run(scenario())
+        self.assertEqual(seen, ["run-9"])  # 开跑即上报 run_id（列表运行行的进度来源）
+        stop_mock.assert_called_once_with("run-9")
+        self.assertEqual(res["state"], "stopped")
+        self.assertFalse(res["ok"])
+        pub.assert_not_called()
+        send.assert_not_called()
+
+    def test_running_entry_fields_and_none_when_not_running(self):
+        nc._active = None
+        self.assertIsNone(nc.running_entry())
+
+        async def scenario():
+            holder = asyncio.create_task(asyncio.sleep(30))
+            nc._active = holder
+            nc._current_run_id = "run-live"
+            with mock.patch.object(nc.result_store, "get_run", return_value={
+                    "status": "running", "started_at": "2026-09-07T07:09:53.188818",
+                    "completed_questions": 43, "total_questions": 487}):
+                entry = nc.running_entry()
+            holder.cancel()
+            return entry
+
+        entry = asyncio.run(scenario())
+        self.assertEqual(entry["date"], "running")
+        self.assertTrue(entry["running"])
+        self.assertEqual(entry["state"], "running")
+        self.assertEqual((entry["correct"], entry["total"]), (43, 487))
+        # evals 库存 UTC naive 起跑时刻，展示口径统一带北京偏移
+        self.assertTrue(entry["generated_at"].startswith("2026-09-07T15:09"))
+        self.assertTrue(entry["generated_at"].endswith("+08:00"))
+
+
 if __name__ == "__main__":
     unittest.main()

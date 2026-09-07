@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import re as _re
+import shutil
 from datetime import datetime as _dt, timezone as _tz
 from typing import Any, Dict, Optional
 
@@ -383,6 +384,9 @@ async def list_nightly_days():
         for name in sorted(os.listdir(root), reverse=True)
         if _NIGHTLY_DATE_RE.match(name) and os.path.isdir(os.path.join(root, name))
     ]
+    entry = nightly_control.running_entry()
+    if entry:
+        days.insert(0, entry)
     return {"days": days}
 
 
@@ -415,6 +419,44 @@ async def put_nightly_settings(payload: Dict[str, Any]):
     cfg["last_dispatch"] = nightly_control.load_settings().get("last_dispatch")
     nightly_control.save_settings(cfg)
     return await get_nightly_settings()
+
+
+@evals_router.post("/nightly/stop", dependencies=[Depends(require_admin_session)])
+async def post_nightly_stop():
+    """停止运行中的流水线（当前题完成后收尾）：不落 error 档结论、不发企微通知。"""
+    r = nightly_control.stop_pipeline()
+    if not r.get("ok"):
+        raise HTTPException(status_code=409, detail=r.get("detail") or "当前没有流水线在运行")
+    return r
+
+
+@evals_router.delete("/nightly/{date}", dependencies=[Depends(require_admin_session)])
+async def delete_nightly_day(date: str):
+    """删除一条夜间维护结论：连带删除对应评测 run（日常测试的逐题结果一并消失，不可恢复）；
+    run 若仍在运行先停再删（与「停止」同语义）。"""
+    if not _NIGHTLY_DATE_RE.match(date):
+        raise HTTPException(status_code=404, detail="日期格式不合法")
+    day_dir = os.path.join(_nightly_root(), date)
+    if not os.path.isdir(day_dir):
+        raise HTTPException(status_code=404, detail="该日期无夜间维护记录")
+    entry: Dict[str, Any] = {}
+    try:
+        with open(os.path.join(day_dir, "nightly.json"), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            entry = data
+    except (OSError, ValueError):
+        pass  # 损坏条目照样可删，只是无从连带删 run
+    stopped_run = deleted_run = False
+    run_id = str(entry.get("run_id") or "")
+    if run_id:
+        run = result_store.get_run(run_id) or {}
+        if run.get("status") in ("running", "pending", "queued"):
+            suite_runner.stop_eval_run(run_id)
+            stopped_run = True
+        deleted_run = suite_runner.delete_eval_run(run_id)
+    shutil.rmtree(day_dir, ignore_errors=True)
+    return {"status": "deleted", "date": date, "stopped_run": stopped_run, "deleted_run": deleted_run}
 
 
 @evals_router.get("/nightly/{date}", dependencies=[Depends(require_admin_session)])

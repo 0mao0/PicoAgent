@@ -31,6 +31,7 @@
         row-key="date"
         :loading="loading"
         :expand-row-by-click="true"
+        :expandable="{ rowExpandable: (record: NightlyDay) => !record.running }"
         :empty-text="EMPTY_TEXT"
         storage-key="angineer-nightly-v2"
         @expand="handleExpand"
@@ -62,6 +63,24 @@
           </template>
           <template v-else-if="column.key === 'verdict'">
             {{ record.verdict || fallbackVerdict(record) }}
+          </template>
+          <template v-else-if="column.key === 'action'">
+            <a-space v-if="record.running" :size="6">
+              <a-popconfirm title="停止后当前题目做完即退出，不留结论、不发通知" @confirm="stopRunning">
+                <a-button size="small" danger>停止</a-button>
+              </a-popconfirm>
+              <a-popconfirm title="删除会同步停止正在运行的评测，确认？" @confirm="stopRunning">
+                <a-button size="small">删除</a-button>
+              </a-popconfirm>
+            </a-space>
+            <a-popconfirm
+              v-else
+              title="删除这条结论记录，并连带删除对应评测 run（逐题结果一并消失，不可恢复）"
+              :width="260"
+              @confirm="removeDay(record)"
+            >
+              <a-button size="small" danger>删除</a-button>
+            </a-popconfirm>
           </template>
         </template>
 
@@ -123,6 +142,8 @@ import NightlyDayDetail from './NightlyDayDetail.vue'
 interface NightlyDay {
   date: string
   state: string
+  /** 后端注入的虚拟运行行（date 固定 "running"，不落归档） */
+  running?: boolean
   subject?: string
   generated_at?: string
   overall_score?: number
@@ -153,23 +174,25 @@ const details = ref<Record<string, NightlyDayDetailData>>({})
 
 const EMPTY_TEXT = '暂无夜间维护记录 —— nightly 评测流程每晚运行后自动在此发布门禁结论'
 
+// 全列居中（antd align 经 DataTableColumn 索引签名透传到 a-table，表头与单元格同时生效）
 const columns: DataTableColumn[] = [
-  { title: '序号', key: 'seq', width: 60, minWidth: 50, customRender: ({ index }: { index: number }) => index + 1 },
-  { title: '维护内容', key: 'subject', width: 240, minWidth: 150, ellipsis: true },
-  { title: '时间', key: 'time', width: 150, minWidth: 120 },
-  { title: '结论', key: 'state', width: 80, minWidth: 64 },
-  { title: '平均分', key: 'overall', width: 92, minWidth: 80 },
-  { title: '题量', key: 'correct', width: 104, minWidth: 88,
+  { title: '序号', key: 'seq', width: 60, minWidth: 50, align: 'center', customRender: ({ index }: { index: number }) => index + 1 },
+  { title: '维护内容', key: 'subject', width: 240, minWidth: 150, ellipsis: true, align: 'center' },
+  { title: '时间', key: 'time', width: 150, minWidth: 120, align: 'center' },
+  { title: '结论', key: 'state', width: 80, minWidth: 64, align: 'center' },
+  { title: '平均分', key: 'overall', width: 92, minWidth: 80, align: 'center' },
+  { title: '题量', key: 'correct', width: 104, minWidth: 88, align: 'center',
     customRender: ({ record }: { record: NightlyDay }) =>
       record.correct != null && record.total != null ? `${record.correct}/${record.total}` : '—' },
-  { title: '基线', key: 'delta', width: 90, minWidth: 72 },
-  { title: '评价', key: 'verdict', width: 220, minWidth: 160, flex: true, resizable: true },
+  { title: '基线', key: 'delta', width: 90, minWidth: 72, align: 'center' },
+  { title: '评价', key: 'verdict', width: 220, minWidth: 160, flex: true, resizable: true, align: 'center' },
+  { title: '操作', key: 'action', width: 140, minWidth: 120, align: 'center' },
 ]
 
 const stateColor = (state: string) =>
-  ({ green: 'success', red: 'error', error: 'warning', corrupt: 'default' }[state] || 'default')
+  ({ running: 'processing', green: 'success', red: 'error', error: 'warning', corrupt: 'default' }[state] || 'default')
 const stateLabel = (state: string) =>
-  ({ green: '通过', red: '回归', error: '失败', corrupt: '损坏' }[state] || state || '—')
+  ({ running: '运行中', green: '通过', red: '回归', error: '失败', corrupt: '损坏' }[state] || state || '—')
 const pct = (value?: number) => (value == null ? '—' : `${(value * 100).toFixed(2)}%`)
 const deltaText = (day: NightlyDay) =>
   day.delta == null ? '—' : `${day.delta > 0 ? '+' : ''}${(day.delta * 100).toFixed(2)}`
@@ -221,6 +244,32 @@ const fetchList = async () => {
     message.error('夜间维护记录加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+/** 停止运行中流水线；运行中行的「删除」同为此语义——不留痕、干净消失 */
+const stopRunning = async () => {
+  try {
+    const r = await evalsApi.stopNightly() as { detail?: string }
+    message.success(r?.detail || '已请求停止：当前题目完成后退出')
+  } catch (e) {
+    message.error(String((e as Error)?.message || '停止失败'))
+  } finally {
+    fetchList()
+    loadSchedule()
+  }
+}
+
+/** 删除历史结论：后端连带删除对应评测 run（run 在跑会先停） */
+const removeDay = async (record: NightlyDay) => {
+  try {
+    const r = await evalsApi.deleteNightlyDay(record.date) as { stopped_run?: boolean }
+    message.success(r?.stopped_run ? '已停止运行中的评测，并删除该记录与对应 run' : '已删除该记录与对应评测 run')
+  } catch (e) {
+    message.error(String((e as Error)?.message || '删除失败'))
+  } finally {
+    fetchList()
+    loadSchedule()
   }
 }
 
@@ -279,14 +328,12 @@ const loadSchedule = async () => {
   }
 }
 
-/** 流水线运行期间每分钟刷状态；结束后自动刷新结论列表（当天新条目即时可见） */
+/** 流水线运行期间每分钟刷状态与列表（虚拟运行行进度 xxx/487 随轮询走）；结束后停轮询 */
 const startRunPolling = () => {
   runPollTimer = setInterval(async () => {
     await loadSchedule()
-    if (!sched.running) {
-      stopRunPolling()
-      fetchList()
-    }
+    fetchList()
+    if (!sched.running) stopRunPolling()
   }, 60_000)
 }
 const stopRunPolling = () => {
