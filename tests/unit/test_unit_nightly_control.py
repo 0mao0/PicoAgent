@@ -227,6 +227,22 @@ class StopAndRunningRowTests(unittest.TestCase):
         nc._active = None
         self.assertIsNone(nc.running_entry())
 
+    def test_running_entry_seed_row_during_start_gap(self):
+        """起跑间隙（run 未上报/未建档）也有行——点「立即运行」立即可见"启动中"。"""
+        async def scenario():
+            holder = asyncio.create_task(asyncio.sleep(30))
+            nc._active = holder
+            nc._current_run_id = ""
+            seed = nc.running_entry()
+            holder.cancel()
+            return seed
+
+        seed = asyncio.run(scenario())
+        self.assertTrue(seed["running"])
+        self.assertIsNone(seed["correct"])
+        self.assertIn("启动中", seed["verdict"])
+
+    def test_running_entry_fields_and_none_when_running_row_exists(self):
         async def scenario():
             holder = asyncio.create_task(asyncio.sleep(30))
             nc._active = holder

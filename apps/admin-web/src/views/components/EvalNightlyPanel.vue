@@ -65,12 +65,13 @@
             {{ record.verdict || fallbackVerdict(record) }}
           </template>
           <template v-else-if="column.key === 'action'">
+            <!-- 按钮在行内，click.stop 阻断冒泡，避免 expandRowByClick 顺带展开明细 -->
             <a-space v-if="record.running" :size="6">
               <a-popconfirm title="停止后当前题目做完即退出，不留结论、不发通知" @confirm="stopRunning">
-                <a-button size="small" danger>停止</a-button>
+                <a-button size="small" danger @click.stop>停止</a-button>
               </a-popconfirm>
               <a-popconfirm title="删除会同步停止正在运行的评测，确认？" @confirm="stopRunning">
-                <a-button size="small">删除</a-button>
+                <a-button size="small" @click.stop>删除</a-button>
               </a-popconfirm>
             </a-space>
             <a-popconfirm
@@ -79,7 +80,7 @@
               :width="260"
               @confirm="removeDay(record)"
             >
-              <a-button size="small" danger>删除</a-button>
+              <a-button size="small" danger @click.stop>删除</a-button>
             </a-popconfirm>
           </template>
         </template>
@@ -328,13 +329,13 @@ const loadSchedule = async () => {
   }
 }
 
-/** 流水线运行期间每分钟刷状态与列表（虚拟运行行进度 xxx/487 随轮询走）；结束后停轮询 */
+/** 流水线运行期间每 15s 刷状态与列表（虚拟行进度随轮询走；停止/收口后行消失与按钮恢复也靠它） */
 const startRunPolling = () => {
   runPollTimer = setInterval(async () => {
     await loadSchedule()
     fetchList()
     if (!sched.running) stopRunPolling()
-  }, 60_000)
+  }, 15_000)
 }
 const stopRunPolling = () => {
   if (runPollTimer) clearInterval(runPollTimer)
@@ -382,6 +383,9 @@ const confirmLaunch = async () => {
       runModal.open = false
       sched.running = true
       startRunPolling()
+      // 立即拉一次出"启动中"种子行；起跑建档有几秒间隙，8s 后再补拉出真实进度
+      fetchList()
+      setTimeout(fetchList, 8_000)
     } else {
       message.warning(r.detail || '未能启动')
     }

@@ -165,18 +165,20 @@ def _on_run_started(run_id: str) -> None:
 
 
 def running_entry() -> Optional[dict]:
-    """列表虚拟运行行：进度取 evals.sqlite 的实时 run；起跑前/已终态返回 None。
+    """列表虚拟运行行：流水线在跑就有行——起跑间隙（run 尚未建档/上报）给"启动中"种子行，
+    点「立即运行」后立即可见；已进终态（收口毫秒间隙）返回 None。
 
     evals 库 started_at 为 UTC naive（容器 UTC），展示统一转北京 +08 带偏移，
     与归档条目 generated_at 同口径，前端 fmtTime 直接解析。"""
-    if not is_running() or not _current_run_id:
+    if not is_running():
         return None
-    run = result_store.get_run(_current_run_id) or {}
-    if run.get("status") not in ("running", "pending", "queued"):
+    run = result_store.get_run(_current_run_id) if _current_run_id else None
+    status = (run or {}).get("status")
+    if run is not None and status not in (None, "", "running", "pending", "queued"):
         return None
     cfg = load_settings()
     subject = pipeline._dataset_subject(cfg["dataset_id"])
-    started = str(run.get("started_at") or "")
+    started = str((run or {}).get("started_at") or "")
     generated = ""
     if started:
         try:
@@ -186,12 +188,15 @@ def running_entry() -> Optional[dict]:
             generated = dt.astimezone(BJT).isoformat(timespec="seconds")
         except ValueError:
             generated = started
+    if not started:
+        generated = datetime.now(BJT).isoformat(timespec="seconds")  # 种子行时间=按下时刻
     return {
         "date": "running", "running": True, "state": "running",
         "generated_at": generated, "run_id": _current_run_id,
         "dataset_id": cfg["dataset_id"], "subject": subject,
-        "correct": run.get("completed_questions"), "total": run.get("total_questions"),
-        "verdict": "评测进行中，完成后出结论",
+        "correct": (run or {}).get("completed_questions"),
+        "total": (run or {}).get("total_questions"),
+        "verdict": "评测进行中，完成后出结论" if run else "评测启动中…",
     }
 
 
