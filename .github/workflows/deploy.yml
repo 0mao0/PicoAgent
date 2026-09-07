@@ -18,7 +18,9 @@ on:
 
 concurrency:
   group: deploy
-  cancel-in-progress: true
+  # 排队不取消：部署会 compose down/up 变更生产，中途取消会留下半新半旧镜像
+  # （2026-09-07 实踩：构建被新 push 取消 → 容器混载新 pipeline + 旧 notify → nightly finalize AttributeError）
+  cancel-in-progress: false
 
 jobs:
   deploy:
