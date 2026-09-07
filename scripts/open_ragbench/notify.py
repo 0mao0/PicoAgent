@@ -14,9 +14,23 @@ from evals_core.nightly import notify as _notify
 
 STATE_GREEN, STATE_RED, STATE_ERROR = _notify.STATE_GREEN, _notify.STATE_RED, _notify.STATE_ERROR
 build_message = _notify.build_message
-send = _notify.send
 _fmt_span = _notify.fmt_span
 _STATE_BY_CONCLUSION = {"success": STATE_GREEN, "failure": STATE_RED}
+
+
+def send(webhook: str, text: str) -> str:
+    """多群尽力推送（WEBHOOK 可逗号/分号/空白分隔）；单群失败不阻断其余，全失败才抛。"""
+    bodies, errors = [], []
+    for url in _notify.split_webhooks(webhook):
+        try:
+            bodies.append(_notify.send(url, text))
+        except Exception as exc:  # noqa: BLE001 通知失败不翻转 job 结论（结论由 gate 决定）
+            errors.append(f"{_notify.target_label(url)}: {exc}")
+    if errors and not bodies:
+        raise RuntimeError("; ".join(errors))
+    if errors:
+        print("部分群推送失败: " + "; ".join(errors), file=sys.stderr)
+    return "\n".join(bodies)
 
 
 def main() -> int:

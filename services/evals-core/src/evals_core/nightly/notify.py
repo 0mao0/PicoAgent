@@ -6,10 +6,14 @@ gate.json"渲染成绿色"评测通过"——从此绿色必须有 gate 结论�
 卡片必须带真实结果与基线差异（Δpp+CI、过渡矩阵）——用户视角是"测试集重新跑一遍
 的结果和与基线的区别"，不是一句"通过"。
 """
+import ipaddress
 import json
+import re
+import socket
 import urllib.request
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
+from urllib.parse import urlparse
 
 STATE_GREEN, STATE_RED, STATE_ERROR = "green", "red", "error"
 _HEADS = {STATE_GREEN: "**🟢 AnGIneer nightly 评测通过**",
@@ -75,8 +79,65 @@ def append_links(text: str, site_url: str = "", run_label: str = "") -> str:
     return text
 
 
+def split_webhooks(raw: str) -> List[str]:
+    """WEBHOOK 配置支持逗号/分号/空白（含换行）分隔多个群机器人，去重保序。
+
+    密钥只从环境变量读取，严禁写进源码/示例/测试。"""
+    seen, out = set(), []
+    for part in re.split(r"[,;\s]+", (raw or "").strip()):
+        if part and part not in seen:
+            seen.add(part)
+            out.append(part)
+    return out
+
+
+def target_label(url: str) -> str:
+    """日志用目标标识：只留 scheme://host，绝不回显含 key 的完整 URL。"""
+    try:
+        parsed = urlparse(url)
+        return f"{parsed.scheme}://{parsed.hostname}" if parsed.hostname else "<无效地址>"
+    except ValueError:
+        return "<无效地址>"
+
+
+def _validate_webhook_url(url: str) -> None:
+    """SSRF 边界：仅允许 http/https，且解析后地址必须为公网（拒 localhost/环回/私有/保留段）。"""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"webhook 协议不合法（仅 http/https）: {target_label(url)}")
+    if parsed.username or parsed.password:
+        raise ValueError(f"webhook 不允许内嵌凭据: {target_label(url)}")
+    if not parsed.hostname:
+        raise ValueError("webhook 缺少主机名")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, port)
+    except socket.gaierror as exc:
+        raise ValueError(f"webhook 域名解析失败: {target_label(url)}") from exc
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            raise ValueError(f"webhook 解析出非法地址: {target_label(url)}") from None
+        if (ip.is_private or ip.is_loopback or ip.is_reserved
+                or ip.is_link_local or ip.is_multicast or ip.is_unspecified):
+            raise ValueError(f"webhook 指向非公网地址，已拒绝: {target_label(url)}")
+
+
 def send(webhook: str, text: str) -> str:
+    """单群推送：发送前校验 URL，发送后校验企微返回的 errcode——
+    企微对失效 webhook 也回 HTTP 200，不校验 errcode 会把拒收当送达（2026-09 通知实踩）。"""
+    _validate_webhook_url(webhook)
     body = json.dumps({"msgtype": "markdown", "markdown": {"content": text}}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(webhook, data=body, headers={"Content-Type": "application/json; charset=utf-8"})
     with urllib.request.urlopen(req, timeout=15) as resp:
-        return resp.read().decode()
+        payload = resp.read().decode()
+    try:
+        data = json.loads(payload)
+    except ValueError as exc:
+        raise RuntimeError(f"企微 webhook 返回非 JSON: {payload[:200]!r}") from exc
+    if data.get("errcode") != 0:
+        raise RuntimeError(
+            f"企微 webhook 拒收: errcode={data.get('errcode')} errmsg={data.get('errmsg', '')}"
+        )
+    return payload
