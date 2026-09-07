@@ -860,7 +860,8 @@ class CanonicalSQLiteStore:
             like_keyword = f"%{keyword}%"
             params.extend([like_keyword, like_keyword, like_keyword])
         sql += " ORDER BY page_start ASC, chunk_id ASC LIMIT ?"
-        params.append(max(1, min(1000, limit)))
+        # 上限 20000（原 1000）：FormulaRetriever 全文档瘦加载需整篇 chunks 一次取回
+        params.append(max(1, min(20000, limit)))
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [
@@ -918,7 +919,8 @@ class CanonicalSQLiteStore:
             like_keyword = f"%{keyword}%"
             params.extend([like_keyword, like_keyword, like_keyword])
         sql += " ORDER BY page_idx ASC, reading_order ASC LIMIT ?"
-        params.append(max(1, min(1000, limit)))
+        # 上限 20000（原 1000）：FormulaRetriever 全文档瘦加载需整篇 blocks 一次取回
+        params.append(max(1, min(20000, limit)))
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [

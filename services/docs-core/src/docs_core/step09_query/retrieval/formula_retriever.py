@@ -1,11 +1,16 @@
 """公式/计算问答专用检索器。"""
 from typing import List, Optional, Sequence
 
-from docs_core.models.types import CanonicalBlock, CanonicalDocument
+from docs_core.models.types import CanonicalBlock, CanonicalChunk
 from docs_core.step09_query.protocols.contracts import KnowledgeNode, KnowledgeQueryRequest, RetrievedItem
 from docs_core.step09_query.protocols.data_port import QueryDataPort, default_query_data_port
 from docs_core.step09_query.retrieval.dense_retriever import score_text
 from docs_core.step09_query.retrieval.query_normalizer import contains_clause_ref, extract_clause_refs, extract_formula_identifiers, tokenize_query
+
+
+# 全文档取数上限：与 canonical_sql_store 的 LIMIT 钳位对齐，保证整篇 blocks/chunks
+# 一次取回，不截断大文档尾部公式（实测单文档最大约 7.4k blocks / 2.9k chunks）。
+_FULL_DOC_ROW_LIMIT = 20000
 
 
 # 判断问题是否在询问公式、按式计算或计算步骤。
@@ -196,7 +201,7 @@ def build_formula_candidates(
 # 从 section chunk 中补充“按式/统计/取值”类说明片段。
 def build_formula_chunk_candidates(
     request: KnowledgeQueryRequest,
-    document: CanonicalDocument,
+    chunks: Sequence[CanonicalChunk],
     doc_node: KnowledgeNode,
 ) -> List[RetrievedItem]:
     query_tokens = tokenize_query(request.query)
@@ -204,7 +209,7 @@ def build_formula_chunk_candidates(
     query_formula_identifiers = extract_formula_identifiers(request.query)
     calc_query = is_calculation_query(request.query)
     candidates: List[RetrievedItem] = []
-    for chunk in document.chunks:
+    for chunk in chunks:
         chunk_text = normalize_block_text(chunk.text)
         if not chunk_text:
             continue
@@ -286,11 +291,18 @@ class FormulaRetriever:
         clause_refs = extract_clause_refs(request.query)
         query_formula_identifiers = extract_formula_identifiers(request.query)
         candidates: List[RetrievedItem] = []
+        # 瘦加载：仅按文档单表取回 blocks/chunks（替换 get_canonical_document 的 6 表全量拉取），
+        # 候选构造语义不变
         for node in doc_nodes:
-            document = port.get_canonical_document(node.id)
-            if document is None:
+            blocks = list(
+                port.list_canonical_blocks(doc_id=node.id, keyword=None, limit=_FULL_DOC_ROW_LIMIT) or []
+            )
+            chunks = list(
+                port.list_canonical_chunks(doc_id=node.id, keyword=None, limit=_FULL_DOC_ROW_LIMIT) or []
+            )
+            if not blocks and not chunks:
                 continue
-            ordered_blocks = sorted(document.blocks, key=lambda item: (item.page_idx, item.reading_order))
+            ordered_blocks = sorted(blocks, key=lambda item: (item.page_idx, item.reading_order))
             for index, block in enumerate(ordered_blocks):
                 if block.block_type != "formula":
                     continue
@@ -305,7 +317,7 @@ class FormulaRetriever:
                         node,
                     )
                 )
-            candidates.extend(build_formula_chunk_candidates(request, document, node))
+            candidates.extend(build_formula_chunk_candidates(request, chunks, node))
         ranked = sort_formula_candidates(candidates)
         return ranked[: max(1, min(20, request.top_k * 3))]
 
