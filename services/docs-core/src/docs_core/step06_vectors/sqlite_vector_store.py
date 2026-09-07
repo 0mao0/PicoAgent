@@ -339,10 +339,21 @@ class SQLiteVectorStore(VectorStore):
         if not sel_idx:
             return []
         q = np.asarray(query_embedding, dtype=np.float32)
-        scores = (matrix[sel_idx] @ q).tolist()
+        scores = matrix[sel_idx] @ q
+        n = int(scores.shape[0])
+        cap = max(1, min(200, top_k))
+        take = min(cap, n)
+        if take < n:
+            # 部分选择：只保留分数最高的 take 行 + 与第 take 名同分的并列行。
+            # 并列行并入池后仍按 (score, 内容长度) 破平排序，与「全量构造后排序截断」
+            # 语义一致，但避免为注定落选的 ~22 万行做对象构造与 metadata JSON 解析
+            boundary = float(np.partition(scores, -take)[-take])
+            pool_pos = np.flatnonzero(scores >= boundary)
+        else:
+            pool_pos = np.arange(n)
         hits: List[VectorSearchHit] = []
-        for rank, i in enumerate(sel_idx):
-            row = rows[i]
+        for pos in pool_pos:
+            row = rows[sel_idx[int(pos)]]
             hits.append(
                 VectorSearchHit(
                     record_id=row["record_id"],
@@ -350,12 +361,12 @@ class SQLiteVectorStore(VectorStore):
                     entity_type=row["entity_type"],
                     entity_id=row["entity_id"],
                     content=row["content"] or "",
-                    score=scores[rank],
+                    score=float(scores[int(pos)]),
                     metadata=dict(_load_json(row["metadata_json"], {})),
                 )
             )
         ranked = sorted(hits, key=lambda item: (float(item.score or 0.0), len(item.content)), reverse=True)
-        return ranked[: max(1, min(200, top_k))]
+        return ranked[:cap]
 
     # 获取单文档的向量索引统计
     def get_document_stats(self, doc_id: str) -> Dict[str, Any]:
