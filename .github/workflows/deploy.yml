@@ -41,6 +41,39 @@ jobs:
           # gitlink 变更时同步更新 submodule 内容，避免 reset 撞 "Could not access submodule"
           git submodule update --init --recursive
 
+      - name: Version consistency check
+        run: |
+          cd /home/runner/AnGIneer
+          # 获取最新 git tag（发版 commit 才有 tag）
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$TAG" ]; then
+            echo "No git tag found, skip version check."
+            exit 0
+          fi
+          TAG_VER=${TAG#v}
+          # 提取 README.md 版本
+          README_VER=$(sed -n 's/.*当前版本：v\{0,1\}\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' README.md | head -1)
+          # 提取 package.json 版本
+          PKG_VER=$(node -e "console.log(require('./package.json').version)")
+          echo "git tag:    $TAG_VER"
+          echo "README.md:  $README_VER"
+          echo "package.json: $PKG_VER"
+          FAIL=0
+          if [ "$README_VER" != "$TAG_VER" ]; then
+            echo "ERROR: README.md version ($README_VER) != git tag ($TAG_VER)"
+            FAIL=1
+          fi
+          if [ "$PKG_VER" != "$TAG_VER" ]; then
+            echo "ERROR: package.json version ($PKG_VER) != git tag ($TAG_VER)"
+            FAIL=1
+          fi
+          if [ "$FAIL" -eq 1 ]; then
+            echo ""
+            echo "Version mismatch! Run: node scripts/sync-version.mjs $TAG"
+            exit 1
+          fi
+          echo "Version check passed."
+
       - name: Check .env exists
         run: |
           if [ ! -f /home/runner/AnGIneer/.env ]; then
