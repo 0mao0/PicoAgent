@@ -1,15 +1,20 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'path'
 import portContract from '../shared/ports.json'
 import pdfWasmPlugin from '../../packages/docs-ui/vite-pdf-wasm.mjs'
 
-const WEB_CONSOLE_PORT = portContract.webConsolePort
-const DOCS_API_PROXY_TARGET = `http://${portContract.localHost}:${portContract.docsApiPort}`
-const AICHAT_API_PROXY_TARGET = `http://${portContract.localHost}:${portContract.aichatApiPort}`
-const rootPackage = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')) as { version?: string }
-const APP_VERSION = rootPackage.version || '0.1.0'
+function getAppVersion(): string {
+  try {
+    return execSync('git describe --tags --abbrev=0', { encoding: 'utf-8' }).trim().replace(/^v/, '') || '0.1.0';
+  } catch {
+    return '0.1.0';
+  }
+}
+
+const APP_VERSION = getAppVersion();
 
 /**
  * 从根 README「当前版本」行提取本版摘要，供顶栏版本号 hover 展示发版内容。

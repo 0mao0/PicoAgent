@@ -1,6 +1,6 @@
+import { execSync } from 'node:child_process';
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { readFileSync } from 'node:fs'
 import { resolve } from 'path'
 import portContract from '../shared/ports.json'
 import pdfWasmPlugin from '../../packages/docs-ui/vite-pdf-wasm.mjs'
@@ -8,8 +8,15 @@ import pdfWasmPlugin from '../../packages/docs-ui/vite-pdf-wasm.mjs'
 const ADMIN_CONSOLE_PORT = portContract.adminConsolePort
 const DOCS_API_PROXY_TARGET = `http://${portContract.localHost}:${portContract.docsApiPort}`
 const AICHAT_API_PROXY_TARGET = `http://${portContract.localHost}:${portContract.aichatApiPort}`
-const rootPackage = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')) as { version?: string }
-const APP_VERSION = rootPackage.version || '0.1.0'
+
+function getAppVersion(): string {
+  try {
+    return execSync('git describe --tags --abbrev=0', { encoding: 'utf-8' }).trim().replace(/^v/, '') || '0.1.0';
+  } catch {
+    return '0.1.0';
+  }
+}
+const APP_VERSION = getAppVersion();
 
 export default defineConfig({
   base: '/admin/',
