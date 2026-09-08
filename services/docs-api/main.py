@@ -17,6 +17,10 @@ for pkg in ("docs-core", "angineer-core", "tree-core"):
     sys.path.insert(0, str(SERVICES_DIR / pkg / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from docs_core.config_validator import ensure_env, config_status_response
+
+ensure_env()
+
 from docs_routes import docs_router, preview_router
 from graph_routes import graph_router
 from retrieve_routes import retrieve_router
@@ -92,7 +96,15 @@ app.include_router(v1_router)
 
 @app.get("/health")
 def health():
-    # started_at/pid 供启动脚本识别"端口被旧进程占用"（孤儿 worker 代答健康检查）
+    cs = config_status_response()
+    if not cs["config_ok"]:
+        return {
+            "service": "docs-api",
+            "status": "degraded",
+            "config_errors": cs["errors"],
+            "started_at": _PROCESS_STARTED_AT,
+            "pid": os.getpid(),
+        }
     return {
         "service": "docs-api",
         "status": "ok",

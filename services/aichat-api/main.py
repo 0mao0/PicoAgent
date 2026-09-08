@@ -38,6 +38,10 @@ for pkg in (
     sys.path.insert(0, str(SERVICES_DIR / pkg / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from docs_core.config_validator import ensure_env, config_status_response
+
+ensure_env()
+
 from ai_inference.llm_client import LLMClient
 from angineer_core import IntentClassifier
 from angineer_core.base_contracts import ScopeContext
@@ -293,7 +297,15 @@ def steer_agent(run_id: str, request: SteerRequest):
 
 @app.get("/health")
 def health():
-    # started_at/pid 供启动脚本识别"端口被旧进程占用"（孤儿 worker 代答健康检查）
+    cs = config_status_response()
+    if not cs["config_ok"]:
+        return {
+            "service": "aichat-api",
+            "status": "degraded",
+            "config_errors": cs["errors"],
+            "started_at": _PROCESS_STARTED_AT,
+            "pid": os.getpid(),
+        }
     return {
         "service": "aichat-api",
         "status": "ok",
