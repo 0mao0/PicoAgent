@@ -26,16 +26,20 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useAdminAuthStore } from '../stores/auth'
+import { bindSessionSync } from '../../../shared/session'
 
 const auth = useAdminAuthStore()
 const username = ref('')
 const password = ref('')
 const errorText = ref('')
 const authFailed = ref(false)
+let unbindSync: (() => void) | null = null
 
 onMounted(async () => {
+  // 跨应用会话同步：userweb 登出后，adminweb 在获得焦点/同源 storage 变化时同步退出
+  unbindSync = bindSessionSync(() => auth.syncExternal())
   if (!auth.isAuthed) return
   try {
     await auth.refreshMe()
@@ -43,6 +47,10 @@ onMounted(async () => {
   } catch {
     authFailed.value = true
   }
+})
+
+onUnmounted(() => {
+  unbindSync?.()
 })
 
 async function handleLogin() {

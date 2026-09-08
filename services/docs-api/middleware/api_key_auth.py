@@ -71,7 +71,14 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
                     request.scope["query_string"] = urlencode(params).encode("utf-8")
                     request._query_params = None
                 request.state.api_key_info = key_info
-            elif resolve_session_principal(request):
+            else:
+                is_session = resolve_session_principal(request)
+                # 登出不校验库权限：无库用户也要能清理后端会话，否则 logout 会 403 且删不掉 session，
+                # 导致「一个应用退出、另一个仍有效」。无有效会话时幂等放行（route 删除空 token 无副作用）。
+                if path == "/api/v1/auth/logout":
+                    return await call_next(request)
+                if not is_session:
+                    return JSONResponse(status_code=401, content={"detail": "Missing X-API-Key or session token"})
                 params = dict(request.query_params)
                 requested = str(params.get("library_id") or "").strip()
                 final_lib = authorize_library(request, requested)
@@ -80,8 +87,6 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
                 params["library_id"] = final_lib
                 request.scope["query_string"] = urlencode(params).encode("utf-8")
                 request._query_params = None
-            else:
-                return JSONResponse(status_code=401, content={"detail": "Missing X-API-Key or session token"})
 
         response = await call_next(request)
         return response

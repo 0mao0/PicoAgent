@@ -1,5 +1,6 @@
 import type { AxiosInstance, AxiosRequestConfig } from 'axios'
 import { createApiClient } from './createApiClient'
+import { getSessionToken } from './session'
 
 export interface ApiClientConfig {
   baseURL: string
@@ -24,8 +25,7 @@ export interface UnwrappedAxiosInstance {
  * 所有 /api 请求自动带 X-API-Key；后端中间件（P1）据此强制库隔离与注入。
  */
 function tenantAuthHeaders(): Record<string, string> | null {
-  if (typeof localStorage === 'undefined') return null
-  const token = localStorage.getItem('ag_session_token')
+  const token = getSessionToken()
   return token ? { Authorization: `Bearer ${token}` } : null
 }
 

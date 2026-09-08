@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { docsApiClient } from '../../../shared/apiClient'
+import { clearSessionToken, getSessionToken, setSessionToken } from '../../../shared/session'
 
 export interface AdminSessionUser {
   username: string
@@ -9,10 +10,10 @@ export interface AdminSessionUser {
   default_library?: string
 }
 
-/** 管理员会话：账号密码 → 会话 token；与 user-web 同源共享 ag_session_token。 */
+/** 管理员会话：账号密码 → 会话 token；与 user-web 共享同一份 cookie 会话。 */
 export const useAdminAuthStore = defineStore('adminAuth', {
   state: () => ({
-    token: (typeof localStorage !== 'undefined' ? localStorage.getItem('ag_session_token') : null) ?? '',
+    token: getSessionToken(),
     user: null as AdminSessionUser | null,
     checking: false,
   }),
@@ -26,12 +27,12 @@ export const useAdminAuthStore = defineStore('adminAuth', {
         { username, password }
       )
       if (!resp.user.is_admin) {
-        localStorage.removeItem('ag_session_token')
+        clearSessionToken()
         this.token = ''
         this.user = null
         throw new Error('该账号无管理员权限')
       }
-      localStorage.setItem('ag_session_token', resp.token)
+      setSessionToken(resp.token)
       this.token = resp.token
       this.user = resp.user
     },
@@ -63,9 +64,26 @@ export const useAdminAuthStore = defineStore('adminAuth', {
       } catch {
         // best-effort：本地一定清理
       }
-      localStorage.removeItem('ag_session_token')
+      clearSessionToken()
       this.token = ''
       this.user = null
+    },
+    /** 跨应用同步：重读共享 token，为空则退出，否则刷新用户信息（非管理员会触发登出）。 */
+    async syncExternal() {
+      const t = getSessionToken()
+      if (t === this.token) return
+      if (!t) {
+        clearSessionToken()
+        this.token = ''
+        this.user = null
+        return
+      }
+      this.token = t
+      try {
+        await this.refreshMe()
+      } catch {
+        // 会话无效/非管理员时 refreshMe 内部已登出
+      }
     },
   },
 })

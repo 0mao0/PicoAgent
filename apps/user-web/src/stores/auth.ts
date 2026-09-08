@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { docsApiClient } from '../../../shared/apiClient'
+import { clearSessionToken, getSessionToken, setSessionToken } from '../../../shared/session'
 
 export interface SessionUserInfo {
   username: string
@@ -12,7 +13,7 @@ export interface SessionUserInfo {
 /** 用户会话：登录 = 账号密码 → 后端签发会话 token；库集合由服务端裁定。 */
 export const useAuthStore = defineStore('auth', {
   state: () => ({
-    token: (typeof localStorage !== 'undefined' ? localStorage.getItem('ag_session_token') : null) ?? '',
+    token: getSessionToken(),
     user: null as SessionUserInfo | null,
     activeLibraryId: '',
     checking: false,
@@ -28,7 +29,7 @@ export const useAuthStore = defineStore('auth', {
         '/v1/auth/login',
         { username, password }
       )
-      localStorage.setItem('ag_session_token', resp.token)
+      setSessionToken(resp.token)
       this.token = resp.token
       this.user = resp.user
       this.activeLibraryId = resp.user.default_library || resp.user.libraries[0] || ''
@@ -65,10 +66,28 @@ export const useAuthStore = defineStore('auth', {
       } catch {
         // best-effort：本地一定清
       }
-      localStorage.removeItem('ag_session_token')
+      clearSessionToken()
       this.token = ''
       this.user = null
       this.activeLibraryId = ''
+    },
+    /** 跨应用/跨标签页同步：重读共享 token，为空则退出，否则刷新用户信息。 */
+    async syncExternal() {
+      const t = getSessionToken()
+      if (t === this.token) return
+      if (!t) {
+        clearSessionToken()
+        this.token = ''
+        this.user = null
+        this.activeLibraryId = ''
+        return
+      }
+      this.token = t
+      try {
+        await this.refreshMe()
+      } catch {
+        // 会话无效时 refreshMe 内部已登出，这里吞掉即可
+      }
     },
   },
 })

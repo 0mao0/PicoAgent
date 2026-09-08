@@ -1,4 +1,5 @@
 import { docsApiClient, aichatApiClient } from './apiClient'
+import { getSessionToken } from './session'
 import type {
   InlineCitationSearchPayload,
   QueryRequest,
@@ -26,11 +27,9 @@ export const defaultAIChatTransport = {
   ): Promise<QueryResponse> => {
     // P7 链路：走 /api/chat/agent（AgentSession 多轮 + SSE 事件流）
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    // 租户身份：user-web 登录的 API key 随 SSE 请求注入（aichat 中间件据此强制库隔离）
-    if (typeof localStorage !== 'undefined') {
-      const sessionToken = localStorage.getItem('ag_session_token')
-      if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`
-    }
+    // 租户身份：登录的会话 token 随 SSE 请求注入（aichat 中间件据此强制库隔离）
+    const sessionToken = getSessionToken()
+    if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`
     const response = await fetch('/api/chat/agent', {
       method: 'POST',
       headers,
