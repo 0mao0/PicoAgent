@@ -2,6 +2,10 @@
 
 All notable changes to AnGIneer are documented here.
 
+## v0.2.39
+
+前端双端顶栏统一与跨应用会话同步：抽出共享品牌组件 `AppBrand`（logo + 名称 + 版本 hover 发版弹层 + 主题灯泡），userweb/admin 共用，顶栏高度（56px）、内边距、背景 `--panel-header-bg`、毛玻璃与按钮内边距对齐一致；版本 hover 发版摘要提取改为兼容 README「当前版本：X.Y.Z —— 摘要」无 v 前缀格式（修复此前摘要恒为空、弹层形同虚设）。userweb：右上角用户名不再带图标、工作台仅管理员可见且点击跳转管理台（dev `/admin/`、prod `/admin/` 同源）。admin：右上角新增用户名下拉（同 userweb 交互）、API 管理/用户管理对调、AI 对话按钮跳转 userweb 去重（删除 /chat 路由与 AIChatView）、左侧 logo 改用 `BASE_URL` 修复部署在 `/admin/` 子路径下图片 404、vite 注入 `VITE_APP_RELEASE_NOTES` 使发版弹层生效。`DataTable`（@angineer/table-ui）改为表头与单元格内容默认居中（列级 `column.align` 仍可覆盖）。跨应用会话：会话 token 存 host cookie（端口无关），userweb(3005)/admin(3002) 共享同一会话，任一应用登录/退出在 focus 或同源 storage 变化时实时同步；后端 `/api/v1/auth/logout` 免库校验、无库用户也能幂等删除会话（此前会 403 且删不掉，导致「一个退、另一个不退」）。
+
 ## v0.2.38
 
 夜间维护列表验收三连修：起跑间隙（run 未建档）也出"评测启动中…"种子行、点立即运行立即可见（前端启动后立即补拉 + 8s 再拉真实进度），操作列按钮 click.stop 阻断冒泡不再顺带展开明细行，运行轮询 60s→15s（停止后行消失与按钮恢复从分钟级缩到 ~15s）；新增图描述（VLM figure_describe 阶段 + 全量回填）、M3.2 证据装配与 QA prompt v8、评测套件多线程并发（EVAL_CONCURRENCY=3）；升级 QA prompt v9（二元 Yes/No 结论禁止部分证据引申翻转）并撤回 CLAIM 数值/专名守卫（实测正常题误伤，宁漏勿伤，保留半拒答守卫）。
