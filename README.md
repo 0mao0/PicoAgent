@@ -2,7 +2,7 @@
 
 **AnGIneer**（AGI + Engineer）：面向严谨工程领域的 AI 工程师——仅用不微调的小型语言模型（SLM），把规范、SOP、工程工具与地理世界组装成可溯源、可执行的工程智能体。
 
-> **当前版本：0.2.39** —— userweb/admin 顶栏统一与共享品牌组件、admin 入口与 AI 对话去重、DataTable 默认全列居中、跨应用会话同步退出（cookie 单一会话）、logout 幂等修复、版本 hover 发版摘要提取兼容修复。详见 [CHANGELOG.md](CHANGELOG.md)。
+> **当前版本：0.2.40** —— userweb/admin 顶栏统一与共享品牌组件、admin 入口与 AI 对话去重、DataTable 默认全列居中、跨应用会话同步退出（cookie 单一会话）、logout 幂等修复、版本 hover 发版摘要提取兼容修复。详见 [CHANGELOG.md](CHANGELOG.md)。
 
 **仓库版本**（六个独立仓库各自用 git tag 发布，发版时同步更新本表）：
 
