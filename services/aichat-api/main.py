@@ -32,13 +32,13 @@ ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 SERVICES_DIR = ROOT_DIR / "services"
 
 for pkg in (
-    "ai-inference", "angineer-core", "sop-core", "docs-core",
+    "shared", "ai-inference", "angineer-core", "sop-core", "docs-core",
     "geo-core", "engtools", "evals-core", "tree-core",
 ):
     sys.path.insert(0, str(SERVICES_DIR / pkg / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from docs_core.config_validator import ensure_env, config_status_response
+from shared.config_validator import ensure_env, config_status_response
 
 ensure_env()
 
