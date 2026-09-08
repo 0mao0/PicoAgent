@@ -1,22 +1,7 @@
 <template>
   <div class="app-header" :class="appClass">
     <div class="header-left">
-      <div
-        class="app-logo"
-        @click="handleLogoClick"
-        :class="{ clickable: logoClickable, 'is-admin': layout === 'admin' }"
-      >
-        <div class="logo-mark" aria-hidden="true">
-          <svg class="logo-icon" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M23 29 L32 11 L41 29 Z" fill="#fff" stroke="#fff" stroke-width="4" stroke-linejoin="round" />
-            <path d="M12 54 L19.6 38 L44.4 38 L52 54" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </div>
-        <div class="app-identity">
-          <span class="app-name">AnGIneer</span>
-          <span v-if="version" class="app-version">{{ versionLabel }}</span>
-        </div>
-      </div>
+      <AppBrand :logo-clickable="logoClickable" @logo-click="$emit('logo-click')" />
 
       <template v-if="layout === 'admin' && moduleItems.length">
         <div class="context-switcher">
@@ -158,6 +143,7 @@ import {
   ControlOutlined,
   DownOutlined
 } from '@ant-design/icons-vue'
+import AppBrand from './AppBrand.vue'
 import { useTheme } from '../../composables/useTheme'
 
 export interface NavItem {
@@ -173,7 +159,6 @@ export interface ViewItem {
 
 interface Props {
   projectName?: string
-  version?: string
   navItems?: NavItem[]
   activeNav?: string
   layout?: 'default' | 'admin'
@@ -194,7 +179,6 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   projectName: '',
-  version: '',
   navItems: () => [],
   activeNav: '',
   layout: 'default',
@@ -230,11 +214,6 @@ const activeModuleLabel = computed(() => {
   return item?.label || props.activeModule || '待选择'
 })
 
-/** 管理端版本号直接显示（不带 v 前缀）；默认布局保留 v 前缀 */
-const versionLabel = computed(() =>
-  props.layout === 'admin' ? props.version : `v${props.version}`
-)
-
 const { isDark, appClass, toggleTheme: doToggleTheme } = useTheme()
 
 const isEditing = ref(false)
@@ -244,13 +223,6 @@ const editInputRef = ref<HTMLInputElement | null>(null)
 watch(() => props.projectName, (val) => {
   if (val) localProjectName.value = val
 })
-
-/** 处理 Logo 点击 */
-const handleLogoClick = () => {
-  if (props.logoClickable) {
-    emit('logo-click')
-  }
-}
 
 /** 开始编辑项目名称 */
 const startEdit = () => {
@@ -299,81 +271,6 @@ const cancelEdit = () => {
   display: flex;
   align-items: center;
   gap: 16px;
-}
-
-.app-logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
-
-  &.clickable {
-    cursor: pointer;
-  }
-
-  .logo-icon {
-    width: 28px;
-    height: 28px;
-  }
-
-  .logo-mark {
-    width: 30px;
-    height: 30px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    background: linear-gradient(135deg, var(--primary-color, #1890ff) 0%, var(--brand-gradient-end, #a855f7) 100%);
-    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
-
-    .logo-icon {
-      width: 16px;
-      height: 16px;
-    }
-  }
-
-  .app-identity {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .app-name {
-    background: linear-gradient(135deg, var(--primary-color) 0%, var(--brand-gradient-end, #a855f7) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .app-version {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-secondary);
-    letter-spacing: 0;
-    transform: translateY(1px);
-  }
-
-  &.is-admin {
-    .app-identity {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 1px;
-      line-height: 1.1;
-    }
-
-    .app-name {
-      font-size: 16px;
-    }
-
-    .app-version {
-      font-size: 10px;
-      transform: none;
-      letter-spacing: 0.02em;
-    }
-  }
 }
 
 .context-switcher {
@@ -568,10 +465,6 @@ const cancelEdit = () => {
         background: rgba(102, 126, 234, 0.36);
       }
     }
-  }
-
-  .logo-mark {
-    box-shadow: 0 2px 10px rgba(24, 144, 255, 0.38);
   }
 }
 </style>

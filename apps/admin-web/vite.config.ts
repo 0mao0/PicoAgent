@@ -25,11 +25,38 @@ function getAppVersion(): string {
 }
 const APP_VERSION = getAppVersion();
 
+/**
+ * 从根 README「当前版本」行提取本版摘要，供顶栏版本号 hover 展示发版内容（与 user-web 一致）。
+ * 该行格式为「当前版本：X.Y.Z —— 摘要」，版本号允许带/不带 v 前缀（此前只匹配
+ * 「vX.Y.Z 」导致 README 用无 v 前缀格式时摘要恒为空，hover 弹层形同虚设）。
+ * 无匹配返回空串（顶栏退化为纯版本号）。
+ */
+function extractReleaseNotes(version: string): string {
+  try {
+    const readme = readFileSync(resolve(__dirname, '../../README.md'), 'utf8')
+    const line = readme.split(/\r?\n/).find(l => l.includes('当前版本：'))
+    if (!line) return ''
+    const idx = line.indexOf('当前版本：')
+    const rest = line.slice(idx + '当前版本：'.length)
+    const m = rest.match(/v?(\d+\.\d+\.\d+)/)
+    if (!m || m[1] !== version) return ''
+    let notes = rest.slice(m.index + m[0].length)
+    notes = notes.replace(/^[\s*:：>]*[-—–]+[\s]*/, '')
+    notes = notes.split('详见 [CHANGELOG.md]')[0]
+    return notes.replace(/。+$/, '').trim()
+  } catch {
+    return ''
+  }
+}
+
+const RELEASE_NOTES = extractReleaseNotes(APP_VERSION)
+
 export default defineConfig({
   base: '/admin/',
   plugins: [vue(), pdfWasmPlugin()],
   define: {
-    'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION)
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION),
+    'import.meta.env.VITE_APP_RELEASE_NOTES': JSON.stringify(RELEASE_NOTES)
   },
   resolve: {
     alias: {

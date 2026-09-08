@@ -469,6 +469,12 @@ function emitQuery(): void {
   text-align: center !important;
 }
 
+// 单元格内容默认居中（表头与内容一致）。用 td.ant-table-cell 提升特异性盖过 antd 默认样式；
+// 不带 !important，这样列级 column.align（antd 写在 td 内联样式上）仍能覆盖成左对齐/右对齐。
+.data-table__table :deep(td.ant-table-cell) {
+  text-align: center;
+}
+
 // 整行热区展开：行级指针光标提示可点击
 .data-table--row-click-expand :deep(.ant-table-row) {
   cursor: pointer;

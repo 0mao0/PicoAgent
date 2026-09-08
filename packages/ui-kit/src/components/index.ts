@@ -1,3 +1,4 @@
+export { default as AppBrand } from './layout/AppBrand.vue'
 export { default as AppHeader } from './layout/AppHeader.vue'
 export { default as Panel } from './layout/Panel.vue'
 export { default as SplitPanes } from './layout/SplitPanes.vue'

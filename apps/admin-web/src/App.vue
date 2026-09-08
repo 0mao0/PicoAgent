@@ -5,7 +5,6 @@
       <div v-if="authStore.isAuthed && authStore.user?.is_admin" class="app-container" :class="appClass">
         <AppHeader
           layout="admin"
-          :version="appVersion"
           :nav-items="navItems"
           :active-nav="activeNav"
           :module-items="navItems"
@@ -20,19 +19,28 @@
           @nav-click="handleNavClick"
         >
           <template #user-menu>
-            <a-button type="text" title="AI 对话" @click="router.push('/chat')">
+            <a-button type="text" title="AI 对话" @click="openUserChat">
               <WechatFilled />
-            </a-button>
-            <a-button type="text" title="用户管理" @click="router.push('/users')">
-              <TeamOutlined />
             </a-button>
             <a-button type="text" title="API 管理" class="api-text-btn" @click="router.push('/api-keys')">
               API
             </a-button>
-            <a-button type="text" title="切换主题" @click="toggleTheme">
-              <BulbFilled v-if="isDark" />
-              <BulbOutlined v-else />
+            <a-button type="text" title="用户管理" @click="router.push('/users')">
+              <TeamOutlined />
             </a-button>
+            <a-dropdown placement="bottomRight">
+              <a-button type="text" class="user-menu-btn" :title="adminDisplayName">
+                <span class="user-name">{{ adminDisplayName }}</span>
+              </a-button>
+              <template #overlay>
+                <a-menu @click="onAdminUserMenuClick">
+                  <a-menu-item key="logout">
+                    <template #icon><LogoutOutlined /></template>
+                    退出登录
+                  </a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
           </template>
         </AppHeader>
 
@@ -47,7 +55,7 @@
 <script setup lang="ts">
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { Modal } from 'ant-design-vue'
-import { BulbFilled, BulbOutlined, TeamOutlined, WechatFilled } from '@ant-design/icons-vue'
+import { LogoutOutlined, TeamOutlined, WechatFilled } from '@ant-design/icons-vue'
 import { useRouter, useRoute } from 'vue-router'
 import { computed, provide, ref, watch } from 'vue'
 import { AppHeader, useTheme, type NavItem } from '@angineer/ui-kit'
@@ -58,8 +66,7 @@ import { useAdminAuthStore } from './stores/auth'
 const router = useRouter()
 const route = useRoute()
 const authStore = useAdminAuthStore()
-const { themeConfig, appClass, isDark, toggleTheme } = useTheme()
-const appVersion = import.meta.env.VITE_APP_VERSION || ''
+const { themeConfig, appClass } = useTheme()
 
 /** 知识库视图状态（列表|解析）：由头部统一控制 */
 const knowledgeView = ref<'list' | 'parse'>('list')
@@ -105,15 +112,14 @@ const navItems: NavItem[] = [
   { key: 'dream-cycle', label: '健康检查' }
 ]
 
-/** 下拉只承载功能性模块；管理类入口（AI 对话/用户管理/API 管理）不占用选中态，下拉显示灰色占位 */
+/** 下拉只承载功能性模块；管理类入口（用户管理/API 管理）不占用选中态，下拉显示灰色占位 */
 const activeModule = computed(() => {
-  if (['chat', 'users', 'api-keys'].includes(activeNav.value)) return ''
+  if (['users', 'api-keys'].includes(activeNav.value)) return ''
   return activeNav.value
 })
 
 const activeNav = computed(() => {
   const path = route.path
-  if (path.startsWith('/chat')) return 'chat'
   if (path.startsWith('/evals')) return 'evals'
   if (path.startsWith('/project')) return 'project'
   if (path.startsWith('/experience')) return 'experience'
@@ -126,7 +132,6 @@ const activeNav = computed(() => {
 /** 导航项点击 */
 const handleNavClick = (key: string) => {
   const routeMap: Record<string, string> = {
-    chat: '/chat',
     project: '/project',
     knowledge: '/knowledge',
     experience: '/experience',
@@ -151,6 +156,22 @@ const handleViewChange = (key: string) => {
   }
   if (key === 'list' || key === 'parse') {
     knowledgeView.value = key
+  }
+}
+
+/** 右上角用户名：与 userweb 交互一致（点用户名 → 退出登录） */
+const adminDisplayName = computed(
+  () => authStore.user?.display_name || authStore.user?.username || '未登录'
+)
+
+/** AI 对话复用 userweb 前端，直接跳转前台，避免重复实现 */
+const openUserChat = () => {
+  window.location.href = webConsoleHref
+}
+
+const onAdminUserMenuClick = async ({ key }: { key: string | number }) => {
+  if (key === 'logout') {
+    await authStore.logout()
   }
 }
 
@@ -206,4 +227,16 @@ html, body, #app {
   letter-spacing: 0.5px;
 }
 
+.user-menu-btn {
+  display: flex;
+  align-items: center;
+  max-width: 200px;
+
+  .user-name {
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
 </style>

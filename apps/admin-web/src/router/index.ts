@@ -12,11 +12,6 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/KnowledgeManage.vue')
   },
   {
-    path: '/chat',
-    name: 'chat',
-    component: () => import('../views/AIChatView.vue')
-  },
-  {
     path: '/project',
     name: 'project',
     component: () => import('../views/PlaceholderPage.vue')
