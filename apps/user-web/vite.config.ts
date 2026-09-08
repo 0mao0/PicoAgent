@@ -6,11 +6,21 @@ import { resolve } from 'path'
 import portContract from '../shared/ports.json'
 import pdfWasmPlugin from '../../packages/docs-ui/vite-pdf-wasm.mjs'
 
+const WEB_CONSOLE_PORT = portContract.webConsolePort
+const DOCS_API_PROXY_TARGET = `http://${portContract.localHost}:${portContract.docsApiPort}`
+const AICHAT_API_PROXY_TARGET = `http://${portContract.localHost}:${portContract.aichatApiPort}`
+
 function getAppVersion(): string {
   try {
     return execSync('git describe --tags --abbrev=0', { encoding: 'utf-8' }).trim().replace(/^v/, '') || '0.1.0';
   } catch {
-    return '0.1.0';
+    // Docker 等环境无 git，回退读 package.json
+    try {
+      const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'));
+      return pkg.version || '0.1.0';
+    } catch {
+      return '0.1.0';
+    }
   }
 }
 

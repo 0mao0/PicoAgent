@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
@@ -13,7 +14,13 @@ function getAppVersion(): string {
   try {
     return execSync('git describe --tags --abbrev=0', { encoding: 'utf-8' }).trim().replace(/^v/, '') || '0.1.0';
   } catch {
-    return '0.1.0';
+    // Docker 等环境无 git，回退读 package.json
+    try {
+      const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'));
+      return pkg.version || '0.1.0';
+    } catch {
+      return '0.1.0';
+    }
   }
 }
 const APP_VERSION = getAppVersion();
