@@ -9,12 +9,12 @@
 import json
 import os
 import re
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 from dotenv import load_dotenv
+from shared.notify import send as _notify_send, split_webhooks as _split_webhooks
 
 load_dotenv()
 
@@ -142,13 +142,11 @@ def validate_env() -> Tuple[List[str], List[str]]:
 
 
 def _send_webhook_notification(errors: List[str], warnings: List[str]) -> None:
-    """校验失败时发送企微 webhook 通知。"""
-    webhook = os.environ.get("WEBHOOK", "").strip()
+    """校验失败时发送企微 webhook 通知（系统维护群）。"""
+    webhook = os.environ.get("WEBHOOK_SYSTEM", "").strip()
     if not webhook:
-        print("[config-validator] WEBHOOK 未配置，跳过通知")
+        print("[config-validator] WEBHOOK_SYSTEM 未配置，跳过通知")
         return
-
-    urls = [u.strip() for u in re.split(r"[,;\s]+", webhook) if u.strip()]
 
     lines = []
     if errors:
@@ -165,20 +163,11 @@ def _send_webhook_notification(errors: List[str], warnings: List[str]) -> None:
 
     text = "\n".join(lines)
 
-    for url in urls:
-        try:
-            if not url.startswith("http://") and not url.startswith("https://"):
-                print(f"[config-validator] webhook URL 非法: {url}")
-                continue
-            req = urllib.request.Request(
-                url,
-                data=text.encode("utf-8"),
-                headers={"Content-Type": "text/plain"},
-            )
-            urllib.request.urlopen(req, timeout=10)
-            print(f"[config-validator] webhook 已通知: {url.split('//')[1].split('/')[0]}")
-        except Exception as exc:  # noqa: BLE001
-            print(f"[config-validator] webhook 推送失败 {url}: {exc}")
+    try:
+        _notify_send(webhook, text, quiet=True)
+        print(f"[config-validator] webhook 已通知 ({len(_split_webhooks(webhook))} 个目标)")
+    except Exception as exc:
+        print(f"[config-validator] webhook 推送失败: {exc}")
 
 
 def ensure_env() -> None:

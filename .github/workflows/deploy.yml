@@ -124,8 +124,9 @@ jobs:
           echo "api=$API" >> $GITHUB_OUTPUT
 
       - name: Notify WeCom group
+        if: always()
         env:
-          WEBHOOK: ${{ secrets.WECOM_WEBHOOK_URL }}
+          WEBHOOK: ${{ secrets.WEBHOOK_DEPLOY }}
           PREV_SHA: ${{ env.PREV_SHA }}
           FE: ${{ steps.health.outputs.frontend }}
           ADM: ${{ steps.health.outputs.admin }}

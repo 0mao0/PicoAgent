@@ -11,26 +11,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from open_ragbench import common  # noqa: F401  统一 sys.path 引导（evals-core 可导入）
 from evals_core.nightly import notify as _notify
+from shared.notify import send as _send
 
 STATE_GREEN, STATE_RED, STATE_ERROR = _notify.STATE_GREEN, _notify.STATE_RED, _notify.STATE_ERROR
 build_message = _notify.build_message
-_fmt_span = _notify.fmt_span
 _STATE_BY_CONCLUSION = {"success": STATE_GREEN, "failure": STATE_RED}
-
-
-def send(webhook: str, text: str) -> str:
-    """多群尽力推送（WEBHOOK 可逗号/分号/空白分隔）；单群失败不阻断其余，全失败才抛。"""
-    bodies, errors = [], []
-    for url in _notify.split_webhooks(webhook):
-        try:
-            bodies.append(_notify.send(url, text))
-        except Exception as exc:  # noqa: BLE001 通知失败不翻转 job 结论（结论由 gate 决定）
-            errors.append(f"{_notify.target_label(url)}: {exc}")
-    if errors and not bodies:
-        raise RuntimeError("; ".join(errors))
-    if errors:
-        print("部分群推送失败: " + "; ".join(errors), file=sys.stderr)
-    return "\n".join(bodies)
 
 
 def main() -> int:
@@ -66,11 +51,14 @@ def main() -> int:
         text += f"\n查看：[夜间维护]({args.site_url})"
     elif args.run_url:
         text += f"\n查看：[运行日志]({args.run_url})"
-    webhook = os.environ.get("WEBHOOK", "").strip()
+    webhook_system = os.environ.get("WEBHOOK_SYSTEM", "").strip()
+    webhook_owner = os.environ.get("WEBHOOK_OWNER", "").strip()
+    webhooks = [w for w in [webhook_system, webhook_owner] if w]
+    webhook = ",".join(webhooks)
     if not webhook:
-        print("WEBHOOK 未配置，跳过推送:\n" + text)
+        print("WEBHOOK_SYSTEM/WEBHOOK_OWNER 均未配置，跳过推送:\n" + text)
         return 0
-    print(send(webhook, text))
+    print(_send(webhook, text, quiet=True))
     return 0  # 通知本身失败与否不翻转 job 结论（结论由 gate 决定）
 
 

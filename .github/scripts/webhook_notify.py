@@ -1,4 +1,8 @@
-"""Send WeCom webhook notification for deployment."""
+"""Send WeCom webhook notification for deployment.
+
+CI 脚本自包含：无法 import shared，内嵌最小 notify 逻辑。
+仅允许 qyapi.weixin.qq.com 白名单（比 shared.notify 更严格）。
+"""
 import ipaddress
 import json
 import os
@@ -10,8 +14,10 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 
-def _validate_webhook(url: str) -> str:
-    """服务端请求边界：仅 https + 企微机器人开放域名白名单，解析后拒绝私网/环回/链路本地/保留地址。"""
+# --- 内嵌 notify（CI 自包含） ---
+
+def _validate_webhook_ci(url: str) -> str:
+    """CI 专用：仅 https + 企微机器人白名单域名。"""
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise SystemExit("WEBHOOK must use https")
@@ -31,12 +37,38 @@ def _validate_webhook(url: str) -> str:
     return url
 
 
-webhook = os.environ.get("WEBHOOK", "")
-if not webhook:
-    print("WEBHOOK not set, skipping")
-    sys.exit(0)
-webhook = _validate_webhook(webhook)
+def _send_markdown_ci(webhook: str, content: str) -> None:
+    """CI 专用：发送 Markdown 消息，禁止重定向。"""
+    payload = json.dumps(
+        {"msgtype": "markdown", "markdown": {"content": content}},
+        ensure_ascii=False,
+    ).encode("utf-8")
 
+    class _ForbidRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise urllib.error.HTTPError(newurl, code, "redirects are forbidden for webhook", headers, fp)
+
+    req = urllib.request.Request(
+        webhook,
+        data=payload,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    opener = urllib.request.build_opener(_ForbidRedirect())
+    resp = opener.open(req)
+    print("WeCom notify status:", resp.status)
+
+    try:
+        body = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        print(f"::error::WeCom notify response body unparsable: {exc}")
+        sys.exit(1)
+    if int(body.get("errcode", 0)) != 0:
+        print(f"::error::WeCom notify rejected: errcode={body.get('errcode')} errmsg={body.get('errmsg')}")
+        sys.exit(1)
+    print("WeCom notify delivered (errcode=0)")
+
+
+# --- 消息构建 ---
 
 def _git(args):
     return subprocess.Popen(
@@ -47,7 +79,6 @@ def _git(args):
     ).communicate()[0].decode().strip()
 
 
-# repo root is parent of .github/scripts/ directory
 repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sha = _git(["log", "-1", "--format=%H"])[:7]
 msg = _git(["log", "-1", "--format=%s"])
@@ -59,7 +90,6 @@ api = os.environ.get("API", "?")
 run_url = os.environ.get("RUN_URL", "")
 prev_sha = os.environ.get("PREV_SHA", "").strip()
 
-# 汇总本次 push 的提交：部署工作流在上一次部署后记录的 HEAD（PREV_SHA）到当前 HEAD 的提交列表
 commit_lines = []
 prev_exists = False
 if prev_sha:
@@ -78,35 +108,30 @@ if prev_exists:
 else:
     total = 1
 
+
 def _release_version() -> str:
-    """版本号以根 package.json 为准（发版约定与 README/tag 三处同步）；读取失败退回最近 tag。"""
     try:
         with open(os.path.join(repo, "package.json"), encoding="utf-8") as fh:
             version = str(json.load(fh).get("version") or "")
         if version:
             return version if version.startswith("v") else "v" + version
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return _git(["describe", "--tags", "--abbrev=0"]) or "unknown"
 
 
-content_parts = ["## ✅ AnGIneer 部署完成", f"> **版本:** `{_release_version()}`"]
-
-
 def _short(line: str, limit: int = 90) -> str:
-    """单条提交 subject 截断：发布/功能 commit 常写长摘要（实测 400~600 字），
-    逐条展示曾把整卡顶爆企微 4096 上限（40058 实踩）。hash 前缀保留，只截正文。"""
     line = line.strip()
     if len(line) <= limit:
         return line
-    # 保留最短完整 hash（7 位）供追踪
     head, _, rest = line.partition(" ")
     if head and len(rest) > limit - 8:
         return f"{head} {rest[: limit - 9].rstrip()}…"
     return line[: limit - 1] + "…"
 
 
-# rerun 场景 PREV_SHA==HEAD 会数出 0 个提交，此时回退为展示当前提交本身
+content_parts = ["## ✅ AnGIneer 部署完成", f"> **版本:** `{_release_version()}`"]
+
 if prev_exists and total > 0:
     content_parts.append(f"> **本次提交:** `{total}` 个")
     for line in commit_lines:
@@ -128,8 +153,6 @@ if run_url:
     content_parts.append("")
     content_parts.append(f"[查看 Actions]({run_url})")
 
-# 企微 markdown 上限 4096 字节（UTF-8 中文 3 字节/字，40058 实踩按字节拒绝）——
-# 单行截断之外加整卡字节级兜底：优先丢最早的提交行，仍超则截断正文
 WECOM_CONTENT_MAX_BYTES = 4096
 content = "\n".join(content_parts)
 while len(content.encode("utf-8")) > WECOM_CONTENT_MAX_BYTES:
@@ -142,7 +165,6 @@ while len(content.encode("utf-8")) > WECOM_CONTENT_MAX_BYTES:
     content_parts.pop(commit_idx)
     content = "\n".join(content_parts)
 if len(content.encode("utf-8")) > WECOM_CONTENT_MAX_BYTES:
-    # 极端兜底：整体截断到 4096 字节内的字符边界
     raw = content.encode("utf-8")
     content = raw[: WECOM_CONTENT_MAX_BYTES].decode("utf-8", errors="ignore") + "…"
 
@@ -152,33 +174,11 @@ if "--dry-run" in sys.argv:
     print(f"===== content bytes: {len(content.encode('utf-8'))} / 4096")
     sys.exit(0)
 
-payload = json.dumps(
-    {"msgtype": "markdown", "markdown": {"content": content}},
-    ensure_ascii=False,
-).encode("utf-8")
-class _ForbidRedirect(urllib.request.HTTPRedirectHandler):
-    """目标地址只允许经过白名单校验的固定端点：跟随重定向会绕过边界校验（rebinding 面）。"""
+# --- 发送 ---
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise urllib.error.HTTPError(newurl, code, "redirects are forbidden for webhook", headers, fp)
-
-
-req = urllib.request.Request(
-    webhook,  # 已经过 _validate_webhook：https + qyapi.weixin.qq.com 白名单 + 解析 IP 边界
-    data=payload,
-    headers={"Content-Type": "application/json; charset=utf-8"},
-)
-opener = urllib.request.build_opener(_ForbidRedirect())
-resp = opener.open(req)
-print("WeCom notify status:", resp.status)
-# 企微机器人对失效 webhook 也返回 HTTP 200，真实投递结果在响应体 errcode——
-# 必须解析并以显性失败收口（此前只打印 HTTP 状态码，通知丢了 job 依旧绿）
-try:
-    body = json.loads(resp.read().decode("utf-8"))
-except Exception as exc:  # noqa: BLE001
-    print(f"::error::WeCom notify response body unparsable: {exc}")
-    sys.exit(1)
-if int(body.get("errcode", 0)) != 0:
-    print(f"::error::WeCom notify rejected: errcode={body.get('errcode')} errmsg={body.get('errmsg')}")
-    sys.exit(1)
-print("WeCom notify delivered (errcode=0)")
+webhook = os.environ.get("WEBHOOK", "")
+if not webhook:
+    print("WEBHOOK not set, skipping")
+    sys.exit(0)
+webhook = _validate_webhook_ci(webhook)
+_send_markdown_ci(webhook, content)

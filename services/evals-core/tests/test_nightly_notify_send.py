@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from evals_core.nightly import notify
+from shared import notify
 
 
 def _fake_addrinfo(ip):
@@ -59,7 +59,7 @@ def test_validate_rejects_non_public(monkeypatch, url, ip):
     assert _host_token(url)  # 主机名解析自检
     monkeypatch.setattr(notify.socket, "getaddrinfo", _fake_addrinfo(ip))
     with pytest.raises(ValueError):
-        notify._validate_webhook_url(url)
+        notify.validate_webhook_url(url)
 
 
 @pytest.mark.parametrize("url", [
@@ -69,12 +69,12 @@ def test_validate_rejects_non_public(monkeypatch, url, ip):
 ])
 def test_validate_rejects_scheme_and_embedded_credential(url):
     with pytest.raises(ValueError):
-        notify._validate_webhook_url(url)
+        notify.validate_webhook_url(url)
 
 
 def test_validate_accepts_public(monkeypatch):
     monkeypatch.setattr(notify.socket, "getaddrinfo", _fake_addrinfo("103.7.28.161"))
-    notify._validate_webhook_url("https://qyapi.example/cgi-bin/webhook/send?key=x")
+    notify.validate_webhook_url("https://qyapi.example/cgi-bin/webhook/send?key=x")
 
 
 def test_send_rejects_errcode_even_with_http_200(monkeypatch):
@@ -85,19 +85,19 @@ def test_send_rejects_errcode_even_with_http_200(monkeypatch):
         lambda req, timeout=None: _Resp(json.dumps({"errcode": 40058, "errmsg": "exceed max length"}).encode()),
     )
     with pytest.raises(RuntimeError, match="errcode=40058"):
-        notify.send("https://qyapi.example/cgi-bin/webhook/send?key=x", "t")
+        notify.send_markdown("https://qyapi.example/cgi-bin/webhook/send?key=x", "t")
 
 
 def test_send_rejects_non_json_response(monkeypatch):
     monkeypatch.setattr(notify.socket, "getaddrinfo", _fake_addrinfo("103.7.28.161"))
     monkeypatch.setattr(notify.urllib.request, "urlopen", lambda req, timeout=None: _Resp(b"<html>gate</html>"))
     with pytest.raises(RuntimeError, match="非 JSON"):
-        notify.send("https://qyapi.example/cgi-bin/webhook/send?key=x", "t")
+        notify.send_markdown("https://qyapi.example/cgi-bin/webhook/send?key=x", "t")
 
 
 def test_send_success_passthrough(monkeypatch):
     monkeypatch.setattr(notify.socket, "getaddrinfo", _fake_addrinfo("103.7.28.161"))
     payload = json.dumps({"errcode": 0, "errmsg": "ok"}).encode()
     monkeypatch.setattr(notify.urllib.request, "urlopen", lambda req, timeout=None: _Resp(payload))
-    out = notify.send("https://qyapi.example/cgi-bin/webhook/send?key=x", "t")
-    assert json.loads(out) == {"errcode": 0, "errmsg": "ok"}
+    out = notify.send_markdown("https://qyapi.example/cgi-bin/webhook/send?key=x", "t")
+    assert out == {"errcode": 0, "errmsg": "ok"}

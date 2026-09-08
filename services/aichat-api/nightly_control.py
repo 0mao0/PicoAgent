@@ -253,7 +253,11 @@ async def _execute(cfg: dict, source: str, slot: Optional[str]) -> dict:
     _stop_requested = False
     _current_run_id = ""
     t0 = time.monotonic()
-    webhook = (os.getenv("NIGHTLY_WECOM_WEBHOOK") or os.getenv("WEBHOOK") or "").strip()
+    # 夜间评测同时通知系统群和业主群
+    webhook_system = (os.getenv("WEBHOOK_SYSTEM") or "").strip()
+    webhook_owner = (os.getenv("WEBHOOK_OWNER") or "").strip()
+    webhooks = [w for w in [webhook_system, webhook_owner] if w]
+    webhook = ",".join(webhooks)
     site_url = (os.getenv("NIGHTLY_SITE_URL") or "https://angineer.cn/admin/evals?view=nightly").strip()
     logger.info("nightly 流水线开始（source=%s, dataset=%s）", source, cfg["dataset_id"])
     try:
